@@ -1,5 +1,5 @@
-const express = require("express");
-const nodemailer = require("nodemailer");
+import express from 'express';
+import nodemailer from 'nodemailer';
 
 const router = express.Router();
 
@@ -15,7 +15,7 @@ router.post("/", async (req, res) => {
       service: "gmail",
       auth: {
         user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
+        pass: process.env.EMAIL_PASSWORD
       }
     });
 
@@ -57,4 +57,4 @@ ${message}
   }
 });
 
-module.exports = router;
+export default router;

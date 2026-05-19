@@ -16,15 +16,16 @@ if (result.error) {
   console.log('✅ .env file loaded successfully. Parsed variables:', Object.keys(result.parsed));
 }
 
-import app from './app.js';
+// Solve Hoisting: Import the app ONLY after dotenv has initialized process.env
+const { default: app } = await import('./app.js');
 
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log(`📡 Allowed Frontend URL: ${process.env.FRONTEND_URL || 'None (using reflect origin)'}`);
-  console.log(`DEBUG: process.env.EMAIL_USER = "${process.env.EMAIL_USER}"`);
-  console.log(`DEBUG: process.env.EMAIL_PASSWORD = "${process.env.EMAIL_PASSWORD ? '********' : 'Not set'}"`);
+  console.log(`📧 Email configured: ${process.env.EMAIL_USER || '❌ NO'}`);
+  console.log(`🔑 App Password set: ${process.env.EMAIL_PASSWORD ? '✅ YES' : '❌ NO'}`);
 }).on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`❌ Error: Port ${PORT} is already in use. Run 'fuser -k ${PORT}/tcp' to clear it or change PORT in .env`);
