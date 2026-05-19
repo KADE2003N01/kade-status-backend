@@ -1,77 +1,35 @@
-import express from 'express';
-import cors from 'cors';
+// Fix for ES6 __dirname and absolute .env path
+import path from 'path';
+import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import contactRoutes from './routes/contact.js';
 
-// Load environment variables
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-const app = express();
+const envPath = path.resolve(__dirname, '.env');
+const result = dotenv.config({ path: envPath });
+
+if (result.error) {
+  console.error('⚠️  Warning: Could not find or load .env file at:', envPath);
+  console.error('👉 Make sure you ran: cp .env.example .env');
+} else if (result.parsed) {
+  console.log('✅ .env file loaded successfully. Parsed variables:', Object.keys(result.parsed));
+}
+
+import app from './app.js';
+
 const PORT = process.env.PORT || 5000;
-
-// =====================
-// MIDDLEWARE
-// =====================
-
-// Parse JSON from frontend
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Enable CORS (allow frontend)
-app.use(cors({
-  origin: true, // allow all during development
-  methods: ['GET', 'POST'],
-  credentials: true
-}));
-
-// Request logger (helps debugging)
-app.use((req, res, next) => {
-  console.log(`${req.method} ${req.url}`);
-  next();
-});
-
-// =====================
-// ROUTES
-// =====================
-
-// Contact route → matches frontend fetch
-app.use('/api/contact', contactRoutes);
-
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'OK',
-    message: 'Backend is running'
-  });
-});
-
-// =====================
-// ERROR HANDLING
-// =====================
-
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    error: 'Route not found'
-  });
-});
-
-// Global error handler
-app.use((err, req, res, next) => {
-  console.error('❌ Error:', err.message);
-
-  res.status(err.status || 500).json({
-    success: false,
-    error: err.message || 'Internal server error'
-  });
-});
-
-// =====================
-// START SERVER
-// =====================
 
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
-  console.log(`📧 Email: ${process.env.EMAIL_USER || 'Not configured'}`);
+  console.log(`📡 Allowed Frontend URL: ${process.env.FRONTEND_URL || 'None (using reflect origin)'}`);
+  console.log(`DEBUG: process.env.EMAIL_USER = "${process.env.EMAIL_USER}"`);
+  console.log(`DEBUG: process.env.EMAIL_PASSWORD = "${process.env.EMAIL_PASSWORD ? '********' : 'Not set'}"`);
+}).on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`❌ Error: Port ${PORT} is already in use. Run 'fuser -k ${PORT}/tcp' to clear it or change PORT in .env`);
+  } else {
+    console.error('❌ Server failed to start:', err.message);
+  }
+  process.exit(1);
 });
