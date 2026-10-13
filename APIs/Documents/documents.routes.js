@@ -70,6 +70,31 @@ function parseMetadata(body) {
   return { title, description, issuedAt, institution };
 }
 
+function parseCvMetadata(body) {
+  const title = typeof body?.title === 'string' ? body.title.trim() : '';
+  const description = typeof body?.description === 'string' ? body.description.trim() : '';
+  const issuedAt = typeof body?.issuedAt === 'string' ? body.issuedAt.trim() : '';
+  const institution = typeof body?.institution === 'string' ? body.institution.trim() : '';
+  if (title.length < 2 || title.length > 120) {
+    throw Object.assign(new Error('Enter a CV title between 2 and 120 characters.'), { status: 400 });
+  }
+  if (!description || description.length > 2000) {
+    throw Object.assign(new Error('Enter a CV description of up to 2,000 characters.'), { status: 400 });
+  }
+  if (issuedAt) {
+    const parsedDate = new Date(`${issuedAt}T00:00:00.000Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(issuedAt)
+      || Number.isNaN(parsedDate.getTime())
+      || parsedDate.toISOString().slice(0, 10) !== issuedAt) {
+      throw Object.assign(new Error('Enter a valid CV issue date.'), { status: 400 });
+    }
+  }
+  if (institution.length > 160) {
+    throw Object.assign(new Error('The CV institution must be 160 characters or fewer.'), { status: 400 });
+  }
+  return { title, description, issuedAt: issuedAt || null, institution: institution || null };
+}
+
 async function savePdf(content, prefix) {
   await mkdir(privateDocumentsDirectory, { recursive: true });
   const storedFilename = `${prefix}-${randomUUID()}.pdf`;
@@ -95,14 +120,16 @@ router.get('/', (req, res, next) => {
 router.post('/cv', requireAdmin, async (req, res, next) => {
   let storedFilename;
   try {
+    const metadata = parseCvMetadata(req.body);
     const { filename, content } = parseDocumentFile(req.body);
     storedFilename = await savePdf(content, 'cv');
     const updatedAt = new Date().toISOString();
     database.prepare(`
       UPDATE portfolio_documents
-      SET filename = ?, stored_filename = ?, updated_at = ?
+      SET title = ?, description = ?, issued_at = ?, institution = ?,
+        filename = ?, stored_filename = ?, updated_at = ?
       WHERE document_id = 'cv'
-    `).run(filename, storedFilename, updatedAt);
+    `).run(metadata.title, metadata.description, metadata.issuedAt, metadata.institution, filename, storedFilename, updatedAt);
     return res.json({
       success: true,
       document: toPublicDocument(database.prepare(`

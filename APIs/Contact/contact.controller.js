@@ -1,4 +1,4 @@
-import { getTransporter } from '../../config/mailer.js';
+import { getMailFromAddress, getTransporter } from '../../config/mailer.js';
 
 export const getStatus = async (req, res) => {
   const transporter = getTransporter();
@@ -42,7 +42,7 @@ export const sendContactEmail = async (req, res) => {
 
     // Notify Owner
     await transporter.sendMail({
-      from: process.env.EMAIL_USER,
+      from: getMailFromAddress(),
       to: process.env.EMAIL_USER,
       replyTo: email,
       subject: `Portfolio: Message from ${name}`,
@@ -51,7 +51,7 @@ export const sendContactEmail = async (req, res) => {
 
     // Auto-reply to Visitor
     await transporter.sendMail({
-      from: process.env.EMAIL_USER,
+      from: getMailFromAddress(),
       to: email,
       subject: 'Message Received - Kade Portfolio',
       text: `Hi ${name},\n\nThanks for reaching out! I've received your message and will respond shortly.`,

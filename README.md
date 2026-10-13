@@ -42,17 +42,28 @@ PORT=5000
 FRONTEND_URL=http://localhost:5500,http://127.0.0.1:5500
 EMAIL_USER=kadecomputerscience@gmail.com
 EMAIL_PASSWORD=your-16-char-password
+# Optional: set these to use an SMTP provider other than the Gmail default
+# SMTP_HOST=smtp.example.com
+# SMTP_PORT=587
+# SMTP_SECURE=false
+# SMTP_FROM=verified-sender@example.com
+TWILIO_ACCOUNT_SID=AC...
+TWILIO_AUTH_TOKEN=your-twilio-auth-token
+TWILIO_FROM_NUMBER=+15017122661
 ADMIN_EMAIL=kadecomputerscience@gmail.com
 ADMIN_PASSWORD=use-a-unique-password-with-at-least-12-characters
 ADMIN_DISPLAY_NAME=David KWIZERA
 DATABASE_PATH=data/portfolio.sqlite
+PUBLIC_API_URL=https://api.example.com
 COOKIE_SAME_SITE=lax
 NODE_ENV=development
 ```
 
+`PUBLIC_API_URL` is optional for local use. Set it to the public backend origin (without a trailing `/api`) when the backend is behind a reverse proxy, so uploaded profile-image links use the correct public address.
+
 The first server start creates the administrator account in SQLite from the `ADMIN_*` values. The password is stored as a salted scrypt hash; the administrator display name is read from the database after sign-in. Once the account exists, sign-in uses the database record and does not require the `ADMIN_*` values to remain configured. Changing bootstrap environment values does not overwrite an existing administrator record. The database file is excluded from Git; production hosting must provide persistent storage for `DATABASE_PATH`.
 
-The downloadable CV and EBC PDF files live in `private-documents/`, outside the public frontend assets. CV and certificate PDFs uploaded through the admin dashboard are stored in that same private directory, while their public display details are stored in SQLite. Keep the private document files deployed with the backend and back up both the directory and database.
+The downloadable CV and EBC PDF files live in `private-documents/`, outside the public frontend assets. CV and certificate PDFs uploaded through the admin dashboard are stored in that same private directory, while their public display details are stored in SQLite. Profile images uploaded from the landing-page editor are checked for supported image signatures and saved under the backend's `profile-images/` directory. Keep these backend assets deployed and back them up with the database.
 
 For an existing installation, update the administrator's email in the SQLite `admin_users` table as well as changing `ADMIN_EMAIL`; changing the bootstrap setting alone does not change the stored login email.
 
@@ -70,16 +81,31 @@ Open `src/admin-login.html` from the frontend through a local HTTP server (for e
 - `POST /api/auth/login` accepts `{ "email": "...", "password": "..." }` and issues an HTTP-only session cookie.
 - `GET /api/auth/me` returns the signed-in administrator's database-backed display name and email.
 - `POST /api/auth/logout` revokes the current server-side session.
-- `POST /api/downloads/request` saves a visitor's name and email or phone before issuing download authorization.
+- `GET /api/homepage` returns the public landing-page content.
+- `PUT /api/homepage` lets an authenticated admin publish landing-page text, images, links, cards, and section visibility to the shared database.
+- `POST /api/homepage/reset` restores the default landing-page content for authenticated admins.
+- `POST /api/downloads/request` validates a visitor's name, selected email/SMS recipient, purpose, and consent, then sends a one-time code via the selected channel. It does not create a request or issue download authorization until the recipient is verified.
+- `POST /api/downloads/verify` accepts `{ "challengeId": "...", "code": "123456" }`; codes expire after 10 minutes and allow five attempts. Code requests are limited to three per recipient/IP pair per 15-minute window. Configure email or Twilio delivery as described below; missing configuration or delivery errors do not grant access.
 - `POST /api/downloads/preview` displays a document inline using that authorization.
+- `GET /api/downloads/preview/:documentId` lets visitors view a published PDF inline without creating a download request; downloading remains gated by the verified contact form.
 - `POST /api/downloads/file` consumes the short-lived authorization and delivers the requested private file.
 - `GET /api/downloads` returns recent download requests to authenticated admins only.
+- `DELETE /api/downloads/:downloadId` removes a visitor request and its associated download tokens for authenticated admins.
 - `GET /api/documents` returns the public CV, EBC document, and certificates.
-- `POST /api/documents/cv` lets an authenticated admin publish a replacement CV PDF (up to 10 MB).
+- `POST /api/documents/cv` lets an authenticated admin publish a replacement CV PDF (up to 10 MB) with its visitor-facing title, description, issue date, and institution.
 - `POST /api/documents/certificates` lets an authenticated admin publish a certificate PDF and its title, description, issue date, and institution.
 - `PUT /api/documents/certificates/:documentId` lets an authenticated admin update certificate details or replace its PDF.
+- `POST /api/homepage/profile-image` accepts an authenticated JPG, PNG, or WebP profile-image upload (up to 5 MB) and updates the published landing-page image.
 - Invalid sign-ins are rate limited to five attempts per IP address per 15-minute window.
 - Sessions expire after eight hours. Keep `.env` and the SQLite database private, use HTTPS in production, and keep a persistent disk mounted for SQLite.
+
+The visitor download form requires `documentId`, `name`, `reason` (10–1,000 characters), exactly one contact method (`email` or `phone`), `channel` (`email` or `sms`), and `consent: true`. Visitors enter their own email or phone number; the matching send-code button is shown, and the code is delivered to that selected contact. The server rejects requests that include both contact methods, and only the verified email or phone is retained as the visitor's follow-up contact. A successful `/api/downloads/request` returns only a `challengeId` and expiry; the actual one-time code is never sent back to the browser. The visitor must enter the real six-digit code received by email or SMS and pass `/api/downloads/verify` before receiving the short-lived download token. Gmail uses `EMAIL_USER` and a Gmail app password in `EMAIL_PASSWORD` (with 2-Step Verification enabled). To use a different SMTP provider, also set `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE` (`true` or `false`), and optionally `SMTP_FROM`. SMS verification requires Twilio `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_NUMBER`; use an active Twilio sender authorized for your account and destination region. Add these values to the backend's private `.env` or hosting-provider secret settings, restart the backend after changing them, and never run the test environment in production. The `.env.example` values are placeholders and cannot deliver messages.
+
+The request endpoint reports success only after the email or SMS provider accepts the message. If delivery fails, it removes the temporary challenge and releases that request's rate-limit reservation so the visitor can retry; delivery logs contain provider error codes only, not message content, OTPs, or recipient details.
+
+If Gmail returns `EAUTH` with response code `535`, Gmail has rejected the configured SMTP credentials. `EMAIL_PASSWORD` must be a Google App Password generated for the same account in `EMAIL_USER` (not the account's regular password); App Passwords require Google 2-Step Verification. Replace the value privately in `.env`, ensure it has no surrounding quotes or accidental whitespace, and restart the backend. The startup message only confirms that a value is present, not that Gmail accepts it. Never paste the password into terminal output, source code, or chat.
+
+The admin dashboard's **Landing page** editor publishes shared content for all site visitors. It controls the page title and description, branding and navigation, hero text and media, introduction, highlight cards, document call-to-action, footer links and contact details, and section visibility. Lists (navigation, cards, and footer links) are edited as JSON in the dashboard. The default page content is restored with the editor's **Restore defaults** action.
 
 ## 📡 API Endpoints
 

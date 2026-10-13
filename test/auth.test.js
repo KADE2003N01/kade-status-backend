@@ -4,6 +4,7 @@ import { existsSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { defaultHomepageContent } from '../config/homepage-content.js';
 
 const databasePath = path.join(tmpdir(), `kade-auth-test-${process.pid}.sqlite`);
 process.env.DATABASE_PATH = databasePath;
@@ -14,6 +15,7 @@ process.env.FRONTEND_URL = 'http://localhost:5500';
 process.env.NODE_ENV = 'test';
 process.env.EMAIL_USER = '';
 process.env.EMAIL_PASSWORD = '';
+process.env.DOWNLOAD_VERIFICATION_TEST_CODE = '246810';
 
 const [{ default: app }, { default: database }] = await Promise.all([
   import('../app.js'),
@@ -26,6 +28,27 @@ const requestOptions = {
   headers: { Origin: 'http://localhost:5500', 'Content-Type': 'application/json' }
 };
 
+async function startDownloadVerification(details) {
+  const response = await fetch(`${baseUrl}/api/downloads/request`, {
+    ...requestOptions,
+    method: 'POST',
+    body: JSON.stringify({ ...details, channel: details.channel || 'email' })
+  });
+  const result = await response.json();
+  assert.equal(response.status, 201);
+  assert.ok(result.challengeId);
+  assert.equal(result.downloadToken, undefined);
+  return result;
+}
+
+async function completeDownloadVerification(challengeId, code = process.env.DOWNLOAD_VERIFICATION_TEST_CODE) {
+  return fetch(`${baseUrl}/api/downloads/verify`, {
+    ...requestOptions,
+    method: 'POST',
+    body: JSON.stringify({ challengeId, code })
+  });
+}
+
 after(async () => {
   await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   const uploadedFiles = database.prepare(`
@@ -36,6 +59,12 @@ after(async () => {
   for (const file of uploadedFiles) {
     const filePath = path.join(backendDirectory, 'private-documents', file.stored_filename);
     if (existsSync(filePath)) unlinkSync(filePath);
+  }
+  const homepageRow = database.prepare("SELECT value_json FROM portfolio_settings WHERE setting_key = 'homepage'").get();
+  const imageFilename = homepageRow?.value_json.match(/profile-[0-9a-f-]{36}\.(?:jpg|png|webp)/)?.[0];
+  if (imageFilename) {
+    const imagePath = path.join(backendDirectory, 'profile-images', imageFilename);
+    if (existsSync(imagePath)) unlinkSync(imagePath);
   }
   database.close();
   for (const suffix of ['', '-shm', '-wal']) {
@@ -69,10 +98,91 @@ test('admin credentials issue a revocable session and the admin name comes from 
     for (const [key, value] of bootstrapCredentials) process.env[key] = value;
   }
   assert.equal(login.status, 200);
+  assert.deepEqual((await login.clone().json()).user, {
+    email: 'admin-test@example.com',
+    displayName: 'Database Test Admin'
+  });
   const cookieHeader = login.headers.get('set-cookie');
   assert.match(cookieHeader, /HttpOnly/i);
   assert.match(cookieHeader, /SameSite=Lax/i);
   const cookie = cookieHeader.split(';', 1)[0];
+
+  const publicHomepage = await fetch(`${baseUrl}/api/homepage`, requestOptions);
+  assert.equal(publicHomepage.status, 200);
+  assert.equal((await publicHomepage.json()).content.hero.title, defaultHomepageContent.hero.title);
+
+  const anonymousHomepageUpdate = await fetch(`${baseUrl}/api/homepage`, {
+    ...requestOptions,
+    method: 'PUT',
+    body: JSON.stringify({ content: defaultHomepageContent })
+  });
+  assert.equal(anonymousHomepageUpdate.status, 401);
+
+  const changedHomepage = structuredClone(defaultHomepageContent);
+  changedHomepage.hero.title = 'Published landing page headline';
+  changedHomepage.introduction.visible = false;
+  const homepageUpdate = await fetch(`${baseUrl}/api/homepage`, {
+    ...requestOptions,
+    method: 'PUT',
+    headers: { ...requestOptions.headers, Cookie: cookie },
+    body: JSON.stringify({ content: changedHomepage })
+  });
+  assert.equal(homepageUpdate.status, 200);
+  const sharedHomepage = await fetch(`${baseUrl}/api/homepage`, requestOptions);
+  const sharedContent = (await sharedHomepage.json()).content;
+  assert.equal(sharedContent.hero.title, changedHomepage.hero.title);
+  assert.equal(sharedContent.introduction.visible, false);
+
+  const unsafeHomepageUpdate = await fetch(`${baseUrl}/api/homepage`, {
+    ...requestOptions,
+    method: 'PUT',
+    headers: { ...requestOptions.headers, Cookie: cookie },
+    body: JSON.stringify({ content: { ...changedHomepage, brand: { ...changedHomepage.brand, imageUrl: 'javascript:alert(1)' } } })
+  });
+  assert.equal(unsafeHomepageUpdate.status, 400);
+
+  const homepageReset = await fetch(`${baseUrl}/api/homepage/reset`, {
+    ...requestOptions,
+    method: 'POST',
+    headers: { ...requestOptions.headers, Cookie: cookie }
+  });
+  assert.equal(homepageReset.status, 200);
+  assert.equal((await homepageReset.json()).content.hero.title, defaultHomepageContent.hero.title);
+
+  const profileImageBytes = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC',
+    'base64'
+  );
+  const profileImageUpload = await fetch(`${baseUrl}/api/homepage/profile-image`, {
+    ...requestOptions,
+    method: 'POST',
+    headers: { ...requestOptions.headers, Cookie: cookie },
+    body: JSON.stringify({ image: `data:image/png;base64,${profileImageBytes.toString('base64')}` })
+  });
+  assert.equal(profileImageUpload.status, 201);
+  const profileImage = await profileImageUpload.json();
+  assert.match(profileImage.imageUrl, /\/api\/homepage\/profile-image\/profile-[0-9a-f-]{36}\.png$/);
+  const homepageWithProfileImage = await fetch(`${baseUrl}/api/homepage`, requestOptions);
+  assert.equal((await homepageWithProfileImage.json()).content.brand.imageUrl, profileImage.imageUrl);
+  const uploadedProfileImage = await fetch(profileImage.imageUrl);
+  assert.equal(uploadedProfileImage.status, 200);
+  assert.equal(uploadedProfileImage.headers.get('content-type'), 'image/png');
+  assert.deepEqual(Buffer.from(await uploadedProfileImage.arrayBuffer()), profileImageBytes);
+  const invalidProfileImage = await fetch(`${baseUrl}/api/homepage/profile-image`, {
+    ...requestOptions,
+    method: 'POST',
+    headers: { ...requestOptions.headers, Cookie: cookie },
+    body: JSON.stringify({ image: 'data:image/png;base64,bm90YW5pbWFnZQ==' })
+  });
+  assert.equal(invalidProfileImage.status, 400);
+  const replacementProfileImage = await fetch(`${baseUrl}/api/homepage/profile-image`, {
+    ...requestOptions,
+    method: 'POST',
+    headers: { ...requestOptions.headers, Cookie: cookie },
+    body: JSON.stringify({ image: `data:image/png;base64,${profileImageBytes.toString('base64')}` })
+  });
+  assert.equal(replacementProfileImage.status, 201);
+  assert.equal((await fetch(profileImage.imageUrl)).status, 404);
 
   const authenticated = await fetch(`${baseUrl}/api/auth/me`, {
     headers: { ...requestOptions.headers, Cookie: cookie }
@@ -88,6 +198,11 @@ test('admin credentials issue a revocable session and the admin name comes from 
 
   const anonymousDownloads = await fetch(`${baseUrl}/api/downloads`, requestOptions);
   assert.equal(anonymousDownloads.status, 401);
+  const anonymousDelete = await fetch(`${baseUrl}/api/downloads/1`, {
+    ...requestOptions,
+    method: 'DELETE'
+  });
+  assert.equal(anonymousDelete.status, 401);
 
   const publicDocuments = await fetch(`${baseUrl}/api/documents`, requestOptions);
   assert.equal(publicDocuments.status, 200);
@@ -99,6 +214,13 @@ test('admin credentials issue a revocable session and the admin name comes from 
     body: JSON.stringify({})
   });
   assert.equal(anonymousCvUpload.status, 401);
+
+  const anonymousProfileImageUpload = await fetch(`${baseUrl}/api/homepage/profile-image`, {
+    ...requestOptions,
+    method: 'POST',
+    body: JSON.stringify({})
+  });
+  assert.equal(anonymousProfileImageUpload.status, 401);
 
   const anonymousCertificateUpload = await fetch(`${baseUrl}/api/documents/certificates`, {
     ...requestOptions,
@@ -114,6 +236,18 @@ test('admin credentials issue a revocable session and the admin name comes from 
   });
   assert.equal(anonymousPreview.status, 403);
 
+  const publicPreview = await fetch(`${baseUrl}/api/downloads/preview/cv`, {
+    headers: { Origin: 'http://localhost:5500' }
+  });
+  assert.equal(publicPreview.status, 200);
+  assert.match(publicPreview.headers.get('content-disposition'), /^inline;/);
+  assert.match(publicPreview.headers.get('content-type'), /^application\/pdf/);
+
+  const missingPublicPreview = await fetch(`${baseUrl}/api/downloads/preview/not-a-published-document`, {
+    headers: { Origin: 'http://localhost:5500' }
+  });
+  assert.equal(missingPublicPreview.status, 404);
+
   const invalidRequest = await fetch(`${baseUrl}/api/downloads/request`, {
     ...requestOptions,
     method: 'POST',
@@ -121,25 +255,197 @@ test('admin credentials issue a revocable session and the admin name comes from 
       documentId: 'cv',
       name: 'Test Visitor',
       email: 'visitor@example.com',
+      reason: 'I need this for a portfolio review.',
       consent: false
     })
   });
   assert.equal(invalidRequest.status, 400);
 
-  const downloadRequest = await fetch(`${baseUrl}/api/downloads/request`, {
+  const missingEmail = await fetch(`${baseUrl}/api/downloads/request`, {
+    ...requestOptions,
+    method: 'POST',
+    body: JSON.stringify({
+      documentId: 'cv',
+      name: 'Test Visitor',
+      phone: '',
+      channel: 'sms',
+      reason: 'I need this for a portfolio review.',
+      consent: true
+    })
+  });
+  assert.equal(missingEmail.status, 400);
+
+  const bothContacts = await fetch(`${baseUrl}/api/downloads/request`, {
     ...requestOptions,
     method: 'POST',
     body: JSON.stringify({
       documentId: 'cv',
       name: 'Test Visitor',
       email: 'visitor@example.com',
-      phone: '',
+      phone: '+250788123456',
+      channel: 'email',
+      reason: 'I need this for a portfolio review.',
       consent: true
     })
   });
-  assert.equal(downloadRequest.status, 201);
-  const { downloadToken, filename } = await downloadRequest.json();
+  assert.equal(bothContacts.status, 400);
+
+  const failedEmailConfig = [
+    'NODE_ENV', 'EMAIL_USER', 'EMAIL_PASSWORD', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_SECURE',
+    'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM_NUMBER'
+  ].map((key) => [key, process.env[key]]);
+  process.env.NODE_ENV = 'development';
+  process.env.EMAIL_USER = '';
+  process.env.EMAIL_PASSWORD = '';
+  delete process.env.TWILIO_ACCOUNT_SID;
+  delete process.env.TWILIO_AUTH_TOKEN;
+  delete process.env.TWILIO_FROM_NUMBER;
+  let unavailableVerification;
+  let unavailableSmsVerification;
+  try {
+    unavailableVerification = await fetch(`${baseUrl}/api/downloads/request`, {
+      ...requestOptions,
+      method: 'POST',
+      body: JSON.stringify({
+        documentId: 'cv',
+        name: 'Test Visitor',
+        email: 'mail-config@example.com',
+        reason: 'I need this for a portfolio review.',
+        channel: 'email',
+        consent: true
+      })
+    });
+    unavailableSmsVerification = await fetch(`${baseUrl}/api/downloads/request`, {
+      ...requestOptions,
+      method: 'POST',
+      body: JSON.stringify({
+        documentId: 'cv',
+        name: 'SMS Config Visitor',
+        phone: '+250788765432',
+        channel: 'sms',
+        reason: 'I need this for a portfolio review.',
+        consent: true
+      })
+    });
+  } finally {
+    for (const [key, value] of failedEmailConfig) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+  assert.equal(unavailableVerification.status, 503);
+  assert.equal(unavailableSmsVerification.status, 503);
+  assert.match((await unavailableVerification.json()).error, /No email code was sent/);
+  assert.match((await unavailableSmsVerification.json()).error, /No SMS code was sent/);
+
+  process.env.NODE_ENV = 'development';
+  process.env.EMAIL_USER = 'sender@example.com';
+  process.env.EMAIL_PASSWORD = 'test-only-password';
+  process.env.SMTP_HOST = '127.0.0.1';
+  process.env.SMTP_PORT = '1';
+  process.env.SMTP_SECURE = 'false';
+  const attemptsBeforeFailedDelivery = database.prepare(`
+    SELECT COALESCE(SUM(attempts), 0) AS attempts FROM download_verification_limits
+  `).get().attempts;
+  let failedDelivery;
+  try {
+    failedDelivery = await fetch(`${baseUrl}/api/downloads/request`, {
+      ...requestOptions,
+      method: 'POST',
+      body: JSON.stringify({
+        documentId: 'cv',
+        name: 'Failed Delivery Visitor',
+        email: 'smtp-failure@example.com',
+        reason: 'I need this for a portfolio review.',
+        channel: 'email',
+        consent: true
+      })
+    });
+  } finally {
+    for (const [key, value] of failedEmailConfig) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+  assert.equal(failedDelivery.status, 502);
+  assert.match((await failedDelivery.json()).error, /No email code was sent/);
+  assert.equal(database.prepare(`
+    SELECT COUNT(*) AS count FROM download_email_verifications WHERE email = ?
+  `).get('smtp-failure@example.com').count, 0);
+  assert.equal(database.prepare(`
+    SELECT COALESCE(SUM(attempts), 0) AS attempts FROM download_verification_limits
+  `).get().attempts, attemptsBeforeFailedDelivery);
+
+  const failedSmsConfig = [
+    'NODE_ENV', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM_NUMBER'
+  ].map((key) => [key, process.env[key]]);
+  process.env.NODE_ENV = 'development';
+  process.env.TWILIO_ACCOUNT_SID = 'AC-test-account';
+  process.env.TWILIO_AUTH_TOKEN = 'test-only-token';
+  process.env.TWILIO_FROM_NUMBER = '+15005550006';
+  const attemptsBeforeFailedSms = database.prepare(`
+    SELECT COALESCE(SUM(attempts), 0) AS attempts FROM download_verification_limits
+  `).get().attempts;
+  const originalFetch = globalThis.fetch;
+  let twilioRequestBody;
+  let failedSmsDelivery;
+  globalThis.fetch = async (input, options) => {
+    if (String(input).startsWith('https://api.twilio.com/')) {
+      twilioRequestBody = new URLSearchParams(options.body);
+      return new Response('', { status: 401 });
+    }
+    return originalFetch(input, options);
+  };
+  try {
+    failedSmsDelivery = await fetch(`${baseUrl}/api/downloads/request`, {
+      ...requestOptions,
+      method: 'POST',
+      body: JSON.stringify({
+        documentId: 'cv',
+        name: 'Failed SMS Visitor',
+        phone: '+250788765432',
+        reason: 'I need this for a portfolio review.',
+        channel: 'sms',
+        consent: true
+      })
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of failedSmsConfig) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+  assert.equal(twilioRequestBody.get('To'), '+250788765432');
+  assert.equal(failedSmsDelivery.status, 502);
+  assert.match((await failedSmsDelivery.json()).error, /No SMS code was sent/);
+  assert.equal(database.prepare(`
+    SELECT COUNT(*) AS count FROM download_email_verifications WHERE phone = ?
+  `).get('+250788765432').count, 0);
+  assert.equal(database.prepare(`
+    SELECT COALESCE(SUM(attempts), 0) AS attempts FROM download_verification_limits
+  `).get().attempts, attemptsBeforeFailedSms);
+
+  const cvChallenge = await startDownloadVerification({
+    documentId: 'cv',
+    name: 'Test Visitor',
+    email: 'visitor@example.com',
+    phone: '',
+    reason: 'I need this for a portfolio review.',
+    consent: true
+  });
+  const incorrectCode = await completeDownloadVerification(cvChallenge.challengeId, '000000');
+  assert.equal(incorrectCode.status, 400);
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM download_enquiries').get().count, 0);
+  const verifiedDownloadRequest = await completeDownloadVerification(cvChallenge.challengeId);
+  assert.equal(verifiedDownloadRequest.status, 201);
+  const { downloadToken, filename } = await verifiedDownloadRequest.json();
   assert.equal(filename, 'KWIZERA-David-CV.pdf');
+  const verifiedEmailContact = database.prepare(`
+    SELECT email, phone FROM download_enquiries WHERE name = ?
+  `).get('Test Visitor');
+  assert.equal(verifiedEmailContact.email, 'visitor@example.com');
+  assert.equal(verifiedEmailContact.phone, null);
 
   const adminDownloads = await fetch(`${baseUrl}/api/downloads`, {
     headers: { ...requestOptions.headers, Cookie: cookie }
@@ -148,6 +454,7 @@ test('admin credentials issue a revocable session and the admin name comes from 
   const downloadRows = (await adminDownloads.json()).downloads;
   assert.equal(downloadRows.length, 1);
   assert.equal(downloadRows[0].email, 'visitor@example.com');
+  assert.equal(downloadRows[0].reason, 'I need this for a portfolio review.');
   assert.equal(downloadRows[0].downloadedAt, null);
 
   const previewResponse = await fetch(`${baseUrl}/api/downloads/preview`, {
@@ -179,18 +486,16 @@ test('admin credentials issue a revocable session and the admin name comes from 
   });
   assert.equal(reusedToken.status, 403);
 
-  const ebcRequest = await fetch(`${baseUrl}/api/downloads/request`, {
-    ...requestOptions,
-    method: 'POST',
-    body: JSON.stringify({
-      documentId: 'ebc',
-      name: 'Test Visitor',
-      phone: '+250 788 000 000',
-      consent: true
-    })
+  const ebcChallenge = await startDownloadVerification({
+    documentId: 'ebc',
+    name: 'Test Visitor',
+    email: 'ebc-visitor@example.com',
+    reason: 'I need the event planning materials for my research.',
+    consent: true
   });
-  assert.equal(ebcRequest.status, 201);
-  const ebcAuthorization = await ebcRequest.json();
+  const ebcVerification = await completeDownloadVerification(ebcChallenge.challengeId);
+  assert.equal(ebcVerification.status, 201);
+  const ebcAuthorization = await ebcVerification.json();
   assert.equal(ebcAuthorization.filename, 'AGENDA_EBC-2026.pdf');
   const ebcFile = await fetch(`${baseUrl}/api/downloads/file`, {
     ...requestOptions,
@@ -250,18 +555,16 @@ test('admin credentials issue a revocable session and the admin name comes from 
   assert.equal(updatedCertificate.status, 200);
   assert.equal((await updatedCertificate.json()).document.title, 'Secure Web Development Certificate');
 
-  const certificateRequest = await fetch(`${baseUrl}/api/downloads/request`, {
-    ...requestOptions,
-    method: 'POST',
-    body: JSON.stringify({
-      documentId: certificate.documentId,
-      name: 'Certificate Visitor',
-      email: 'certificate-visitor@example.com',
-      consent: true
-    })
+  const certificateChallenge = await startDownloadVerification({
+    documentId: certificate.documentId,
+    name: 'Certificate Visitor',
+    email: 'certificate-visitor@example.com',
+    reason: 'I need to confirm this qualification for a job application.',
+    consent: true
   });
-  assert.equal(certificateRequest.status, 201);
-  const certificateAuthorization = await certificateRequest.json();
+  const certificateVerification = await completeDownloadVerification(certificateChallenge.challengeId);
+  assert.equal(certificateVerification.status, 201);
+  const certificateAuthorization = await certificateVerification.json();
   assert.equal(certificateAuthorization.filename, 'secure-web-development.pdf');
   const certificateDownload = await fetch(`${baseUrl}/api/downloads/file`, {
     ...requestOptions,
@@ -275,23 +578,33 @@ test('admin credentials issue a revocable session and the admin name comes from 
     ...requestOptions,
     method: 'POST',
     headers: { ...requestOptions.headers, Cookie: cookie },
-    body: JSON.stringify({ filename: 'Latest CV.pdf', file: certificatePdf })
-  });
-  assert.equal(updatedCv.status, 200);
-  assert.equal((await updatedCv.json()).document.filename, 'Latest CV.pdf');
-
-  const latestCvRequest = await fetch(`${baseUrl}/api/downloads/request`, {
-    ...requestOptions,
-    method: 'POST',
     body: JSON.stringify({
-      documentId: 'cv',
-      name: 'Latest CV Visitor',
-      email: 'latest-cv-visitor@example.com',
-      consent: true
+      title: 'David Kwizera CV',
+      description: 'Updated career history and technical experience.',
+      issuedAt: '2026-02-01',
+      institution: 'University of Rwanda',
+      filename: 'Latest CV.pdf',
+      file: certificatePdf
     })
   });
-  assert.equal(latestCvRequest.status, 201);
-  const latestCvAuthorization = await latestCvRequest.json();
+  assert.equal(updatedCv.status, 200);
+  const updatedCvDetails = (await updatedCv.json()).document;
+  assert.equal(updatedCvDetails.filename, 'Latest CV.pdf');
+  assert.equal(updatedCvDetails.title, 'David Kwizera CV');
+  assert.equal(updatedCvDetails.description, 'Updated career history and technical experience.');
+  assert.equal(updatedCvDetails.issuedAt, '2026-02-01');
+  assert.equal(updatedCvDetails.institution, 'University of Rwanda');
+
+  const latestCvChallenge = await startDownloadVerification({
+    documentId: 'cv',
+    name: 'Latest CV Visitor',
+    email: 'latest-cv-visitor@example.com',
+    reason: 'I need the updated CV for a recruitment application.',
+    consent: true
+  });
+  const latestCvVerification = await completeDownloadVerification(latestCvChallenge.challengeId);
+  assert.equal(latestCvVerification.status, 201);
+  const latestCvAuthorization = await latestCvVerification.json();
   assert.equal(latestCvAuthorization.filename, 'Latest CV.pdf');
   const latestCvDownload = await fetch(`${baseUrl}/api/downloads/file`, {
     ...requestOptions,
@@ -300,6 +613,67 @@ test('admin credentials issue a revocable session and the admin name comes from 
   });
   assert.equal(latestCvDownload.status, 200);
   assert.equal(Buffer.from(await latestCvDownload.arrayBuffer()).toString(), '%PDF-1.4\nPortfolio test certificate');
+
+  const allDownloadRowsResponse = await fetch(`${baseUrl}/api/downloads`, {
+    headers: { ...requestOptions.headers, Cookie: cookie }
+  });
+  const allDownloadRows = (await allDownloadRowsResponse.json()).downloads;
+  assert.equal(allDownloadRows.length, 4);
+  const deletedRequestId = allDownloadRows.find((item) => item.email === 'visitor@example.com').id;
+  database.prepare('INSERT INTO download_access_tokens (token_hash, download_id, expires_at) VALUES (?, ?, ?)')
+    .run('delete-cascade-test-token', deletedRequestId, Date.now() + 60_000);
+  const deletedRequest = await fetch(`${baseUrl}/api/downloads/${deletedRequestId}`, {
+    ...requestOptions,
+    method: 'DELETE',
+    headers: { ...requestOptions.headers, Cookie: cookie }
+  });
+  assert.equal(deletedRequest.status, 200);
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM download_access_tokens WHERE download_id = ?').get(deletedRequestId).count, 0);
+  const remainingRows = await fetch(`${baseUrl}/api/downloads`, {
+    headers: { ...requestOptions.headers, Cookie: cookie }
+  });
+  assert.equal((await remainingRows.json()).downloads.length, 3);
+
+  const smsChallenge = await startDownloadVerification({
+    documentId: 'cv',
+    name: 'SMS Visitor',
+    phone: '+250788123456',
+    reason: 'I need the CV for a professional application.',
+    channel: 'sms',
+    consent: true
+  });
+  assert.equal(smsChallenge.channel, 'sms');
+  const smsVerification = await completeDownloadVerification(smsChallenge.challengeId);
+  assert.equal(smsVerification.status, 201);
+  assert.ok((await smsVerification.json()).downloadToken);
+  const verifiedSmsContact = database.prepare(`
+    SELECT email, phone FROM download_enquiries WHERE name = ?
+  `).get('SMS Visitor');
+  assert.equal(verifiedSmsContact.email, null);
+  assert.equal(verifiedSmsContact.phone, '+250788123456');
+
+  const lockedChallenge = await startDownloadVerification({
+    documentId: 'cv',
+    name: 'Locked Visitor',
+    email: 'locked-visitor@example.com',
+    reason: 'I need this document for independent review.',
+    consent: true
+  });
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    assert.equal((await completeDownloadVerification(lockedChallenge.challengeId, '000000')).status, 400);
+  }
+  assert.equal((await completeDownloadVerification(lockedChallenge.challengeId, '000000')).status, 429);
+
+  const expiredChallenge = await startDownloadVerification({
+    documentId: 'cv',
+    name: 'Expired Visitor',
+    email: 'expired-visitor@example.com',
+    reason: 'I need this document for independent review.',
+    consent: true
+  });
+  database.prepare('UPDATE download_email_verifications SET expires_at = 0 WHERE challenge_id = ?')
+    .run(expiredChallenge.challengeId);
+  assert.equal((await completeDownloadVerification(expiredChallenge.challengeId)).status, 410);
 
   const logout = await fetch(`${baseUrl}/api/auth/logout`, {
     ...requestOptions,

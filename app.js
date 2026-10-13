@@ -5,6 +5,7 @@ import contactRoutes from './APIs/Contact/contact.routes.js'; // Correct path to
 import authRoutes from './APIs/Auth/auth.routes.js';
 import downloadRoutes from './APIs/Downloads/downloads.routes.js';
 import documentRoutes from './APIs/Documents/documents.routes.js';
+import homepageRoutes from './APIs/Homepage/homepage.routes.js';
 
 const app = express();
 
@@ -35,7 +36,7 @@ app.use(cors({
       callback(new Error(`CORS Error: Origin ${origin} not allowed`));
     }
   },
-  methods: ['GET', 'POST', 'PUT', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true
 }));
 
@@ -54,6 +55,7 @@ app.use('/api/contact', contactRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/downloads', downloadRoutes);
 app.use('/api/documents', documentRoutes);
+app.use('/api/homepage', homepageRoutes);
 // app.use('/api/blog', blogRoutes); // How you would add more APIs
 
 // 404 Handler

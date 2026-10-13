@@ -2,5 +2,8 @@
 .env.*
 !.env.example
 data/
+profile-images/
+private-documents/cv-*.pdf
+private-documents/certificate-*.pdf
 node_modules/
 npm-debug.log*

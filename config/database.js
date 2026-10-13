@@ -33,15 +33,45 @@ database.exec(`
     window_started_at INTEGER NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS portfolio_settings (
+    setting_key TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS download_enquiries (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
     email TEXT,
     phone TEXT,
+    reason TEXT NOT NULL DEFAULT '',
     document_id TEXT NOT NULL,
     document_label TEXT NOT NULL,
     requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     downloaded_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS download_email_verifications (
+    challenge_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    phone TEXT,
+    reason TEXT NOT NULL,
+    document_id TEXT NOT NULL,
+    document_label TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    code_hash TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS download_verification_limits (
+    email_hash TEXT NOT NULL,
+    ip_address TEXT NOT NULL,
+    attempts INTEGER NOT NULL,
+    window_started_at INTEGER NOT NULL,
+    PRIMARY KEY (email_hash, ip_address)
   );
 
   CREATE TABLE IF NOT EXISTS download_access_tokens (
@@ -62,6 +92,13 @@ database.exec(`
     updated_at TEXT NOT NULL
   );
 `);
+
+const downloadEnquiryColumns = new Set(
+  database.prepare('PRAGMA table_info(download_enquiries)').all().map((column) => column.name)
+);
+if (!downloadEnquiryColumns.has('reason')) {
+  database.exec("ALTER TABLE download_enquiries ADD COLUMN reason TEXT NOT NULL DEFAULT ''");
+}
 
 const seedDocument = database.prepare(`
   INSERT OR IGNORE INTO portfolio_documents
