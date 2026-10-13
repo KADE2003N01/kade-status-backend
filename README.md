@@ -15,7 +15,7 @@ A simple Express.js backend for handling contact form submissions via email usin
 ## 🚀 Quick Setup (5 minutes)
 
 ### 1. Prerequisites
-- Node.js 16+ installed
+- Node.js 20+ installed
 - Gmail account with 2-Step Verification enabled
 
 ### 2. Install Dependencies
@@ -39,28 +39,47 @@ cp .env.example .env
 Edit `.env` with your credentials:
 ```
 PORT=5000
-FRONTEND_URL=http://localhost:3000
-EMAIL_USER=your-email@gmail.com
+FRONTEND_URL=http://localhost:5500,http://127.0.0.1:5500
+EMAIL_USER=kadecomputerscience@gmail.com
 EMAIL_PASSWORD=your-16-char-password
+ADMIN_EMAIL=kadecomputerscience@gmail.com
+ADMIN_PASSWORD=use-a-unique-password-with-at-least-12-characters
+ADMIN_DISPLAY_NAME=David KWIZERA
+DATABASE_PATH=data/portfolio.sqlite
+COOKIE_SAME_SITE=lax
 NODE_ENV=development
 ```
 
+The first server start creates the administrator account in SQLite from the `ADMIN_*` values. The password is stored as a salted scrypt hash; the administrator display name is read from the database after sign-in. Once the account exists, sign-in uses the database record and does not require the `ADMIN_*` values to remain configured. Changing bootstrap environment values does not overwrite an existing administrator record. The database file is excluded from Git; production hosting must provide persistent storage for `DATABASE_PATH`.
+
+The downloadable CV and EBC PDF files live in `private-documents/`, outside the public frontend assets. CV and certificate PDFs uploaded through the admin dashboard are stored in that same private directory, while their public display details are stored in SQLite. Keep the private document files deployed with the backend and back up both the directory and database.
+
+For an existing installation, update the administrator's email in the SQLite `admin_users` table as well as changing `ADMIN_EMAIL`; changing the bootstrap setting alone does not change the stored login email.
+
+For a frontend and API on different sites, use HTTPS and set `COOKIE_SAME_SITE=none`; browsers may restrict third-party cookies, so same-site hosting or a reverse proxy is preferred. Set `FRONTEND_URL` to the exact allowed frontend origin(s), separated by commas. Do not use `*` for authenticated requests.
+
 ### 5. Start the Server
 ```bash
-npm run dev
+npm start
 ```
 
-You should see:
-```
-╔════════════════════════════════════╗
-║  🚀 Backend Server Running         ║
-╠════════════════════════════════════╣
-║  Port:        5000
-║  Frontend:    http://localhost:3000
-║  Email:       your-email@gmail.com
-║  Env:         development
-╚════════════════════════════════════╝
-```
+Open `src/admin-login.html` from the frontend through a local HTTP server (for example, VS Code Live Server on port 5500). Set `src/api-config.js` to the deployed API URL when frontend and backend are hosted separately.
+
+## Admin Authentication
+
+- `POST /api/auth/login` accepts `{ "email": "...", "password": "..." }` and issues an HTTP-only session cookie.
+- `GET /api/auth/me` returns the signed-in administrator's database-backed display name and email.
+- `POST /api/auth/logout` revokes the current server-side session.
+- `POST /api/downloads/request` saves a visitor's name and email or phone before issuing download authorization.
+- `POST /api/downloads/preview` displays a document inline using that authorization.
+- `POST /api/downloads/file` consumes the short-lived authorization and delivers the requested private file.
+- `GET /api/downloads` returns recent download requests to authenticated admins only.
+- `GET /api/documents` returns the public CV, EBC document, and certificates.
+- `POST /api/documents/cv` lets an authenticated admin publish a replacement CV PDF (up to 10 MB).
+- `POST /api/documents/certificates` lets an authenticated admin publish a certificate PDF and its title, description, issue date, and institution.
+- `PUT /api/documents/certificates/:documentId` lets an authenticated admin update certificate details or replace its PDF.
+- Invalid sign-ins are rate limited to five attempts per IP address per 15-minute window.
+- Sessions expire after eight hours. Keep `.env` and the SQLite database private, use HTTPS in production, and keep a persistent disk mounted for SQLite.
 
 ## 📡 API Endpoints
 
@@ -116,7 +135,7 @@ Check if email service is configured.
 ```json
 {
   "configured": true,
-  "email": "your-email@gmail.com"
+  "email": "kadecomputerscience@gmail.com"
 }
 ```
 
@@ -205,7 +224,7 @@ npm install -g heroku
 heroku login
 heroku create your-app-name
 git push heroku main
-heroku config:set EMAIL_USER=your-email@gmail.com
+heroku config:set EMAIL_USER=kadecomputerscience@gmail.com
 heroku config:set EMAIL_PASSWORD=your-password
 heroku config:set FRONTEND_URL=https://your-domain.com
 ```
@@ -281,7 +300,7 @@ Then edit `.env` and add:
 ```
 PORT=5000
 FRONTEND_URL=http://localhost:3000
-EMAIL_USER=your-email@gmail.com
+EMAIL_USER=kadecomputerscience@gmail.com
 EMAIL_PASSWORD=your-app-password-here
 ```
 
@@ -315,7 +334,7 @@ Backend will run on `http://localhost:5000`
 4. Select your GitHub repo
 5. Set environment variables:
    - `PORT=5000`
-   - `EMAIL_USER=your-email@gmail.com`
+   - `EMAIL_USER=kadecomputerscience@gmail.com`
    - `EMAIL_PASSWORD=your-app-password`
    - `FRONTEND_URL=https://your-portfolio-url.com`
 6. Deploy!
@@ -334,7 +353,7 @@ Backend will run on `http://localhost:5000`
 heroku login
 heroku create your-app-name
 git push heroku main
-heroku config:set EMAIL_USER=your-email@gmail.com
+heroku config:set EMAIL_USER=kadecomputerscience@gmail.com
 heroku config:set EMAIL_PASSWORD=your-app-password
 ```
 

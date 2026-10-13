@@ -1,23 +1,41 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import contactRoutes from './APIs/Contact/contact.routes.js'; // Correct path to Contact API routes
+import authRoutes from './APIs/Auth/auth.routes.js';
+import downloadRoutes from './APIs/Downloads/downloads.routes.js';
+import documentRoutes from './APIs/Documents/documents.routes.js';
 
 const app = express();
 
 // Middleware
-app.use(express.json());
+app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+const localDevelopmentOrigins = [
+  'http://localhost:5500',
+  'http://127.0.0.1:5500',
+  'http://localhost:3000',
+  'http://localhost:5173'
+];
+const configuredOrigins = (process.env.FRONTEND_URL || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter((origin) => origin && origin !== '*');
+const allowedOrigins = configuredOrigins.length
+  ? configuredOrigins
+  : process.env.NODE_ENV === 'production' ? [] : localDevelopmentOrigins;
 
 app.use(cors({
   origin: (origin, callback) => {
-    const allowedOrigins = [process.env.FRONTEND_URL, 'http://localhost:3000', 'http://localhost:5173', 'null'].filter(Boolean);
-    if (!origin || process.env.FRONTEND_URL === '*' || allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       callback(new Error(`CORS Error: Origin ${origin} not allowed`));
     }
   },
-  methods: ['GET', 'POST', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'OPTIONS'],
   credentials: true
 }));
 
@@ -33,6 +51,9 @@ app.get('/api/health', (req, res) => res.json({ status: 'OK' }));
 
 // [APIs Registration] - Register your API modules here
 app.use('/api/contact', contactRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/downloads', downloadRoutes);
+app.use('/api/documents', documentRoutes);
 // app.use('/api/blog', blogRoutes); // How you would add more APIs
 
 // 404 Handler
