@@ -100,6 +100,14 @@ if (!downloadEnquiryColumns.has('reason')) {
   database.exec("ALTER TABLE download_enquiries ADD COLUMN reason TEXT NOT NULL DEFAULT ''");
 }
 
+// Track the real upload date of every document (existing rows keep NULL = seeded defaults).
+const documentColumns = new Set(
+  database.prepare('PRAGMA table_info(portfolio_documents)').all().map((column) => column.name)
+);
+if (!documentColumns.has('created_at')) {
+  database.exec('ALTER TABLE portfolio_documents ADD COLUMN created_at TEXT');
+}
+
 const seedDocument = database.prepare(`
   INSERT OR IGNORE INTO portfolio_documents
     (document_id, document_type, title, description, issued_at, institution, filename, stored_filename, updated_at)
@@ -122,8 +130,8 @@ const bootstrapDisplayName = process.env.ADMIN_DISPLAY_NAME?.trim();
 const hasBootstrapCredentials = Boolean(bootstrapEmail && bootstrapPassword && bootstrapDisplayName);
 
 if (hasBootstrapCredentials) {
-  if (bootstrapPassword.length < 12) {
-    throw new Error('ADMIN_PASSWORD must be at least 12 characters long.');
+  if (bootstrapPassword.length < 5) {
+    throw new Error('ADMIN_PASSWORD must be at least 5 characters long.');
   }
 
   const existingAdmin = database.prepare('SELECT id FROM admin_users LIMIT 1').get();

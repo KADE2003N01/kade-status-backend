@@ -51,7 +51,7 @@ TWILIO_ACCOUNT_SID=AC...
 TWILIO_AUTH_TOKEN=your-twilio-auth-token
 TWILIO_FROM_NUMBER=+15017122661
 ADMIN_EMAIL=kadecomputerscience@gmail.com
-ADMIN_PASSWORD=use-a-unique-password-with-at-least-12-characters
+ADMIN_PASSWORD=replace-with-your-own-password
 ADMIN_DISPLAY_NAME=David KWIZERA
 DATABASE_PATH=data/portfolio.sqlite
 PUBLIC_API_URL=https://api.example.com
@@ -62,6 +62,8 @@ NODE_ENV=development
 `PUBLIC_API_URL` is optional for local use. Set it to the public backend origin (without a trailing `/api`) when the backend is behind a reverse proxy, so uploaded profile-image links use the correct public address.
 
 The first server start creates the administrator account in SQLite from the `ADMIN_*` values. The password is stored as a salted scrypt hash; the administrator display name is read from the database after sign-in. Once the account exists, sign-in uses the database record and does not require the `ADMIN_*` values to remain configured. Changing bootstrap environment values does not overwrite an existing administrator record. The database file is excluded from Git; production hosting must provide persistent storage for `DATABASE_PATH`.
+
+`ADMIN_PASSWORD` must contain at least 5 characters when bootstrapping an administrator. This low minimum is a security tradeoff; use a longer, unique password wherever possible.
 
 The downloadable CV and EBC PDF files live in `private-documents/`, outside the public frontend assets. CV and certificate PDFs uploaded through the admin dashboard are stored in that same private directory, while their public display details are stored in SQLite. Profile images uploaded from the landing-page editor are checked for supported image signatures and saved under the backend's `profile-images/` directory. Keep these backend assets deployed and back them up with the database.
 
@@ -74,7 +76,7 @@ For a frontend and API on different sites, use HTTPS and set `COOKIE_SAME_SITE=n
 npm start
 ```
 
-Open `src/admin-login.html` from the frontend through a local HTTP server (for example, VS Code Live Server on port 5500). Set `src/api-config.js` to the deployed API URL when frontend and backend are hosted separately.
+Run the backend with `npm start`, then run the React frontend from `kade-status-frontend` with `npm install` and `npm run dev` in a second terminal. Open the URL printed by Vite and visit `src/admin-login.html`. Vite proxies local `/api` requests to the backend at `http://127.0.0.1:5000`, so visitor and admin requests use the same origin during development. Build the static site with `npm run build` and deploy the generated `dist/` directory. The existing visitor and admin `.html` page URLs are generated from the React entry during the build. For separate frontend and backend hosts, set `VITE_PORTFOLIO_API_BASE_URL` to the backend API base URL (for example, `https://api.example.com/api`) when building.
 
 ## Admin Authentication
 

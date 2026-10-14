@@ -18,15 +18,20 @@ const localDevelopmentOrigins = [
   'http://localhost:5500',
   'http://127.0.0.1:5500',
   'http://localhost:3000',
-  'http://localhost:5173'
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:5174',
+  'http://127.0.0.1:5174',
+  'http://localhost:5175',
+  'http://127.0.0.1:5175'
 ];
 const configuredOrigins = (process.env.FRONTEND_URL || '')
   .split(',')
   .map((origin) => origin.trim())
   .filter((origin) => origin && origin !== '*');
-const allowedOrigins = configuredOrigins.length
+const allowedOrigins = process.env.NODE_ENV === 'production'
   ? configuredOrigins
-  : process.env.NODE_ENV === 'production' ? [] : localDevelopmentOrigins;
+  : [...new Set([...localDevelopmentOrigins, ...configuredOrigins])];
 
 app.use(cors({
   origin: (origin, callback) => {

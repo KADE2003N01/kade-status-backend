@@ -20,7 +20,8 @@ function toPublicDocument(row) {
     issuedAt: row.issued_at,
     institution: row.institution,
     filename: row.filename,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    createdAt: row.created_at ?? null
   };
 }
 
@@ -106,7 +107,7 @@ router.get('/', (req, res, next) => {
   try {
     const documents = database.prepare(`
       SELECT document_id, document_type, title, description, issued_at,
-        institution, filename, updated_at
+        institution, filename, updated_at, created_at
       FROM portfolio_documents
       ORDER BY CASE document_type WHEN 'cv' THEN 0 WHEN 'document' THEN 1 ELSE 2 END,
         issued_at DESC, title COLLATE NOCASE
@@ -123,21 +124,19 @@ router.post('/cv', requireAdmin, async (req, res, next) => {
     const metadata = parseCvMetadata(req.body);
     const { filename, content } = parseDocumentFile(req.body);
     storedFilename = await savePdf(content, 'cv');
+    const documentId = `cv-${randomUUID()}`;
     const updatedAt = new Date().toISOString();
     database.prepare(`
-      UPDATE portfolio_documents
-      SET title = ?, description = ?, issued_at = ?, institution = ?,
-        filename = ?, stored_filename = ?, updated_at = ?
-      WHERE document_id = 'cv'
-    `).run(metadata.title, metadata.description, metadata.issuedAt, metadata.institution, filename, storedFilename, updatedAt);
-    return res.json({
-      success: true,
-      document: toPublicDocument(database.prepare(`
-        SELECT document_id, document_type, title, description, issued_at,
-          institution, filename, updated_at
-        FROM portfolio_documents WHERE document_id = 'cv'
-      `).get())
-    });
+      INSERT INTO portfolio_documents
+        (document_id, document_type, title, description, issued_at, institution, filename, stored_filename, updated_at, created_at)
+      VALUES (?, 'cv', ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(documentId, metadata.title, metadata.description, metadata.issuedAt, metadata.institution, filename, storedFilename, updatedAt, updatedAt);
+    const document = database.prepare(`
+      SELECT document_id, document_type, title, description, issued_at,
+        institution, filename, updated_at, created_at
+      FROM portfolio_documents WHERE document_id = ?
+    `).get(documentId);
+    return res.status(201).json({ success: true, document: toPublicDocument(document) });
   } catch (error) {
     if (storedFilename) {
       await unlink(path.join(privateDocumentsDirectory, storedFilename)).catch((cleanupError) => {
@@ -158,13 +157,13 @@ router.post('/certificates', requireAdmin, async (req, res, next) => {
     const updatedAt = new Date().toISOString();
     database.prepare(`
       INSERT INTO portfolio_documents
-        (document_id, document_type, title, description, issued_at, institution, filename, stored_filename, updated_at)
-      VALUES (?, 'certificate', ?, ?, ?, ?, ?, ?, ?)
-    `).run(documentId, metadata.title, metadata.description, metadata.issuedAt, metadata.institution, filename, storedFilename, updatedAt);
+        (document_id, document_type, title, description, issued_at, institution, filename, stored_filename, updated_at, created_at)
+      VALUES (?, 'certificate', ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(documentId, metadata.title, metadata.description, metadata.issuedAt, metadata.institution, filename, storedFilename, updatedAt, updatedAt);
 
     const document = database.prepare(`
       SELECT document_id, document_type, title, description, issued_at,
-        institution, filename, updated_at
+        institution, filename, updated_at, created_at
       FROM portfolio_documents WHERE document_id = ?
     `).get(documentId);
     return res.status(201).json({ success: true, document: toPublicDocument(document) });
@@ -182,12 +181,13 @@ router.put('/certificates/:documentId', requireAdmin, async (req, res, next) => 
   let storedFilename;
   try {
     const existing = database.prepare(`
-      SELECT document_id, filename, stored_filename FROM portfolio_documents
-      WHERE document_id = ? AND document_type = 'certificate'
+      SELECT document_id, document_type, filename, stored_filename FROM portfolio_documents
+      WHERE document_id = ? AND document_type IN ('certificate', 'cv', 'document')
     `).get(req.params.documentId);
-    if (!existing) return res.status(404).json({ success: false, error: 'Certificate not found.' });
+    if (!existing) return res.status(404).json({ success: false, error: 'Document not found.' });
 
-    const metadata = parseMetadata(req.body);
+    const isCv = existing.document_type === 'cv';
+    const metadata = isCv ? parseCvMetadata(req.body) : parseMetadata(req.body);
     const hasFile = typeof req.body?.file === 'string' && req.body.file.length > 0;
     const upload = hasFile ? parseDocumentFile(req.body) : null;
     if (upload) storedFilename = await savePdf(upload.content, existing.document_id);
@@ -207,18 +207,40 @@ router.put('/certificates/:documentId', requireAdmin, async (req, res, next) => 
       updatedAt,
       existing.document_id
     );
+    if (storedFilename && storedFilename !== existing.stored_filename) {
+      await unlink(path.join(privateDocumentsDirectory, existing.stored_filename)).catch((cleanupError) => {
+        console.error('Could not remove the replaced document file:', cleanupError);
+      });
+    }
     const document = database.prepare(`
       SELECT document_id, document_type, title, description, issued_at,
-        institution, filename, updated_at
+        institution, filename, updated_at, created_at
       FROM portfolio_documents WHERE document_id = ?
     `).get(existing.document_id);
     return res.json({ success: true, document: toPublicDocument(document) });
   } catch (error) {
     if (storedFilename) {
       await unlink(path.join(privateDocumentsDirectory, storedFilename)).catch((cleanupError) => {
-        console.error('Could not clean up an unpublished certificate file:', cleanupError);
+        console.error('Could not clean up an unpublished document file:', cleanupError);
       });
     }
+    return next(error);
+  }
+});
+
+router.delete('/:documentId', requireAdmin, async (req, res, next) => {
+  try {
+    const existing = database.prepare(`
+      SELECT document_id, stored_filename FROM portfolio_documents WHERE document_id = ?
+    `).get(req.params.documentId);
+    if (!existing) return res.status(404).json({ success: false, error: 'Document not found.' });
+
+    database.prepare('DELETE FROM portfolio_documents WHERE document_id = ?').run(existing.document_id);
+    await unlink(path.join(privateDocumentsDirectory, existing.stored_filename)).catch((cleanupError) => {
+      console.error('Could not remove the deleted document file:', cleanupError);
+    });
+    return res.json({ success: true });
+  } catch (error) {
     return next(error);
   }
 });

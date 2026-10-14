@@ -9,7 +9,7 @@ import { defaultHomepageContent } from '../config/homepage-content.js';
 const databasePath = path.join(tmpdir(), `kade-auth-test-${process.pid}.sqlite`);
 process.env.DATABASE_PATH = databasePath;
 process.env.ADMIN_EMAIL = 'admin-test@example.com';
-process.env.ADMIN_PASSWORD = 'a-unique-test-password-123';
+process.env.ADMIN_PASSWORD = 'test5';
 process.env.ADMIN_DISPLAY_NAME = 'Database Test Admin';
 process.env.FRONTEND_URL = 'http://localhost:5500';
 process.env.NODE_ENV = 'test';
@@ -73,6 +73,20 @@ after(async () => {
   }
 });
 
+test('Vite frontend origin can make credentialed API requests', async () => {
+  const response = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'OPTIONS',
+    headers: {
+      Origin: 'http://127.0.0.1:5173',
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': 'content-type'
+    }
+  });
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get('access-control-allow-origin'), 'http://127.0.0.1:5173');
+  assert.equal(response.headers.get('access-control-allow-credentials'), 'true');
+});
+
 test('admin credentials issue a revocable session and the admin name comes from SQLite', async () => {
   const anonymous = await fetch(`${baseUrl}/api/auth/me`, requestOptions);
   assert.equal(anonymous.status, 401);
@@ -92,7 +106,7 @@ test('admin credentials issue a revocable session and the admin name comes from 
     login = await fetch(`${baseUrl}/api/auth/login`, {
       ...requestOptions,
       method: 'POST',
-      body: JSON.stringify({ email: 'admin-test@example.com', password: 'a-unique-test-password-123' })
+      body: JSON.stringify({ email: 'admin-test@example.com', password: 'test5' })
     });
   } finally {
     for (const [key, value] of bootstrapCredentials) process.env[key] = value;
@@ -587,8 +601,10 @@ test('admin credentials issue a revocable session and the admin name comes from 
       file: certificatePdf
     })
   });
-  assert.equal(updatedCv.status, 200);
+  assert.equal(updatedCv.status, 201);
   const updatedCvDetails = (await updatedCv.json()).document;
+  assert.equal(updatedCvDetails.type, 'cv');
+  assert.ok(updatedCvDetails.documentId.startsWith('cv-'));
   assert.equal(updatedCvDetails.filename, 'Latest CV.pdf');
   assert.equal(updatedCvDetails.title, 'David Kwizera CV');
   assert.equal(updatedCvDetails.description, 'Updated career history and technical experience.');
@@ -596,7 +612,7 @@ test('admin credentials issue a revocable session and the admin name comes from 
   assert.equal(updatedCvDetails.institution, 'University of Rwanda');
 
   const latestCvChallenge = await startDownloadVerification({
-    documentId: 'cv',
+    documentId: updatedCvDetails.documentId,
     name: 'Latest CV Visitor',
     email: 'latest-cv-visitor@example.com',
     reason: 'I need the updated CV for a recruitment application.',
