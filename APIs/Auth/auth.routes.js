@@ -144,7 +144,7 @@ router.post('/login', async (req, res, next) => {
     try {
       const row = database.prepare('SELECT value_json FROM portfolio_settings WHERE setting_key = ?').get('homepage');
       const content = row ? JSON.parse(row.value_json) : { ...defaultHomepageContent };
-      content.adminName = user.display_name;
+      if (content.adminNameCustom !== true) content.adminName = user.display_name;
       database.prepare(`
         INSERT INTO portfolio_settings (setting_key, value_json, updated_at)
         VALUES ('homepage', ?, ?)

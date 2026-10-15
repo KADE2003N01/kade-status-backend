@@ -147,15 +147,25 @@ function validateAgainstTemplate(value, template, path) {
     throw Object.assign(new Error(`${path} must be an object.`), { status: 400 });
   }
   const expectedKeys = Object.keys(template);
-  // Allow internal keys the server adds itself (e.g. adminName — the name of the
-  // most recently signed-in administrator, shown in the public footer).
-  const allowedKeys = [...expectedKeys, 'adminName'];
-  if (Object.keys(value).length !== allowedKeys.length || allowedKeys.some((key) => !Object.hasOwn(value, key))) {
-    throw Object.assign(new Error(`${path} has missing or unexpected fields.`), { status: 400 });
-  }
   for (const key of expectedKeys) {
+    if (!Object.hasOwn(value, key)) continue;
     validateAgainstTemplate(value[key], template[key], `${path}.${key}`);
   }
+}
+
+function mergeWithTemplate(value, template) {
+  if (Array.isArray(template)) {
+    if (!Array.isArray(value) || !template.length) return value;
+    return value.map((item) => mergeWithTemplate(item, template[0]));
+  }
+  if (!template || typeof template !== 'object') return value;
+  const merged = {};
+  for (const [key, defaultValue] of Object.entries(template)) {
+    merged[key] = Object.hasOwn(value, key)
+      ? mergeWithTemplate(value[key], defaultValue)
+      : structuredClone(defaultValue);
+  }
+  return merged;
 }
 
 export function validateHomepageContent(content) {
@@ -166,5 +176,16 @@ export function validateHomepageContent(content) {
     throw Object.assign(new Error('Homepage content must be smaller than 80 KB.'), { status: 400 });
   }
   validateAgainstTemplate(content, defaultHomepageContent, 'content');
-  return content;
+  if (Object.hasOwn(content, 'adminName')
+      && (typeof content.adminName !== 'string' || content.adminName.length > 120)) {
+    throw Object.assign(new Error('content.adminName must be text of at most 120 characters.'), { status: 400 });
+  }
+  if (Object.hasOwn(content, 'adminNameCustom') && typeof content.adminNameCustom !== 'boolean') {
+    throw Object.assign(new Error('content.adminNameCustom must be true or false.'), { status: 400 });
+  }
+  return {
+    ...mergeWithTemplate(content, defaultHomepageContent),
+    ...(Object.hasOwn(content, 'adminName') ? { adminName: content.adminName } : {}),
+    ...(Object.hasOwn(content, 'adminNameCustom') ? { adminNameCustom: content.adminNameCustom } : {})
+  };
 }

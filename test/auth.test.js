@@ -4,7 +4,7 @@ import { existsSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defaultHomepageContent } from '../config/homepage-content.js';
+import { defaultHomepageContent, validateHomepageContent } from '../config/homepage-content.js';
 
 const databasePath = path.join(tmpdir(), `kade-auth-test-${process.pid}.sqlite`);
 process.env.DATABASE_PATH = databasePath;
@@ -101,6 +101,63 @@ test('deployed frontend origin can make credentialed API requests', async () => 
   assert.equal(response.headers.get('access-control-allow-credentials'), 'true');
 });
 
+test('homepage content accepts optional fields and defaults omitted fields', () => {
+  const customHomepage = structuredClone(defaultHomepageContent);
+  customHomepage.adminName = 'Portfolio Owner';
+  customHomepage.adminNameCustom = true;
+  customHomepage.footer.tagline = '';
+  customHomepage.footer.socialLinks = [{ label: 'GitHub', href: 'https://github.com/example' }];
+  customHomepage.unrecognizedLegacyField = 'ignored';
+  delete customHomepage.hero.intro;
+  const validatedHomepage = validateHomepageContent(customHomepage);
+  assert.equal(validatedHomepage.adminName, 'Portfolio Owner');
+  assert.equal(validatedHomepage.footer.tagline, '');
+  assert.equal(validatedHomepage.footer.socialLinks[0].label, 'GitHub');
+  assert.equal(validatedHomepage.footer.socialLinks[0].icon, 'fab fa-github');
+  assert.equal(validatedHomepage.hero.intro, defaultHomepageContent.hero.intro);
+  assert.equal(Object.hasOwn(validatedHomepage, 'unrecognizedLegacyField'), false);
+
+  const emptyNameHomepage = structuredClone(customHomepage);
+  emptyNameHomepage.adminName = '';
+  emptyNameHomepage.adminNameCustom = false;
+  assert.equal(validateHomepageContent(emptyNameHomepage).adminName, '');
+});
+
+test('admin can publish checkbox changes with blank and omitted fields', async () => {
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
+    ...requestOptions,
+    method: 'POST',
+    body: JSON.stringify({ email: 'admin-test@example.com', password: 'test5' })
+  });
+  assert.equal(login.status, 200);
+  const cookie = login.headers.get('set-cookie').split(';', 1)[0];
+  const partialHomepage = structuredClone(defaultHomepageContent);
+  partialHomepage.introduction.visible = false;
+  partialHomepage.footer.tagline = '';
+  delete partialHomepage.hero.intro;
+  partialHomepage.unrecognizedLegacyField = 'discard this legacy value';
+
+  const publish = await fetch(`${baseUrl}/api/homepage`, {
+    ...requestOptions,
+    method: 'PUT',
+    headers: { ...requestOptions.headers, Cookie: cookie },
+    body: JSON.stringify({ content: partialHomepage })
+  });
+  assert.equal(publish.status, 200);
+  const publishedHomepage = (await publish.json()).content;
+  assert.equal(publishedHomepage.introduction.visible, false);
+  assert.equal(publishedHomepage.footer.tagline, '');
+  assert.equal(publishedHomepage.hero.intro, defaultHomepageContent.hero.intro);
+  assert.equal(Object.hasOwn(publishedHomepage, 'unrecognizedLegacyField'), false);
+
+  const reset = await fetch(`${baseUrl}/api/homepage/reset`, {
+    ...requestOptions,
+    method: 'POST',
+    headers: { ...requestOptions.headers, Cookie: cookie }
+  });
+  assert.equal(reset.status, 200);
+});
+
 test('admin credentials issue a revocable session and the admin name comes from SQLite', async () => {
   const anonymous = await fetch(`${baseUrl}/api/auth/me`, requestOptions);
   assert.equal(anonymous.status, 401);
@@ -149,6 +206,8 @@ test('admin credentials issue a revocable session and the admin name comes from 
   const changedHomepage = structuredClone(defaultHomepageContent);
   changedHomepage.hero.title = 'Published landing page headline';
   changedHomepage.introduction.visible = false;
+  changedHomepage.adminName = 'Portfolio Owner';
+  changedHomepage.adminNameCustom = true;
   const homepageUpdate = await fetch(`${baseUrl}/api/homepage`, {
     ...requestOptions,
     method: 'PUT',
@@ -160,6 +219,37 @@ test('admin credentials issue a revocable session and the admin name comes from 
   const sharedContent = (await sharedHomepage.json()).content;
   assert.equal(sharedContent.hero.title, changedHomepage.hero.title);
   assert.equal(sharedContent.introduction.visible, false);
+  assert.equal(sharedContent.adminName, 'Portfolio Owner');
+
+  const subsequentLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    ...requestOptions,
+    method: 'POST',
+    body: JSON.stringify({ email: 'admin-test@example.com', password: 'test5' })
+  });
+  assert.equal(subsequentLogin.status, 200);
+  const retainedAdminName = await fetch(`${baseUrl}/api/homepage`, requestOptions);
+  assert.equal((await retainedAdminName.json()).content.adminName, 'Portfolio Owner');
+
+  const emptyAdminName = structuredClone(changedHomepage);
+  emptyAdminName.adminName = '';
+  emptyAdminName.adminNameCustom = false;
+  const invalidAdminNameUpdate = await fetch(`${baseUrl}/api/homepage`, {
+    ...requestOptions,
+    method: 'PUT',
+    headers: { ...requestOptions.headers, Cookie: cookie },
+    body: JSON.stringify({ content: emptyAdminName })
+  });
+  assert.equal(invalidAdminNameUpdate.status, 200);
+  assert.equal((await invalidAdminNameUpdate.json()).content.adminName, '');
+
+  const automaticAdminNameLogin = await fetch(`${baseUrl}/api/auth/login`, {
+    ...requestOptions,
+    method: 'POST',
+    body: JSON.stringify({ email: 'admin-test@example.com', password: 'test5' })
+  });
+  assert.equal(automaticAdminNameLogin.status, 200);
+  const automaticAdminName = await fetch(`${baseUrl}/api/homepage`, requestOptions);
+  assert.equal((await automaticAdminName.json()).content.adminName, 'Database Test Admin');
 
   const unsafeHomepageUpdate = await fetch(`${baseUrl}/api/homepage`, {
     ...requestOptions,

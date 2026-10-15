@@ -34,22 +34,30 @@ const profileImageTypes = {
   }
 };
 
+function readHomepageRecord() {
+  const row = database.prepare('SELECT value_json, updated_at FROM portfolio_settings WHERE setting_key = ?').get(CONTENT_KEY);
+  return row
+    ? { content: JSON.parse(row.value_json), updatedAt: row.updated_at }
+    : { content: defaultHomepageContent, updatedAt: null };
+}
+
 function readHomepageContent() {
-  const row = database.prepare('SELECT value_json FROM portfolio_settings WHERE setting_key = ?').get(CONTENT_KEY);
-  return row ? JSON.parse(row.value_json) : defaultHomepageContent;
+  return readHomepageRecord().content;
 }
 
 function saveHomepageContent(content) {
+  const updatedAt = new Date().toISOString();
   database.prepare(`
     INSERT INTO portfolio_settings (setting_key, value_json, updated_at)
     VALUES (?, ?, ?)
     ON CONFLICT(setting_key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
-  `).run(CONTENT_KEY, JSON.stringify(content), new Date().toISOString());
+  `).run(CONTENT_KEY, JSON.stringify(content), updatedAt);
+  return updatedAt;
 }
 
 router.get('/', (req, res, next) => {
   try {
-    return res.json({ success: true, content: readHomepageContent() });
+    return res.json({ success: true, ...readHomepageRecord() });
   } catch (error) {
     return next(error);
   }
@@ -79,8 +87,8 @@ router.get('/profile-image/:filename', (req, res, next) => {
 router.put('/', requireAdmin, (req, res, next) => {
   try {
     const content = validateHomepageContent(req.body?.content);
-    saveHomepageContent(content);
-    return res.json({ success: true, content });
+    const updatedAt = saveHomepageContent(content);
+    return res.json({ success: true, content, updatedAt });
   } catch (error) {
     return next(error);
   }
@@ -113,7 +121,7 @@ router.post('/profile-image', requireAdmin, async (req, res, next) => {
     const publicApiBase = (process.env.PUBLIC_API_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
     homepage.brand.imageUrl = `${publicApiBase}/api/homepage/profile-image/${storedFilename}`;
     const updatedHomepage = validateHomepageContent(homepage);
-    saveHomepageContent(updatedHomepage);
+    const updatedAt = saveHomepageContent(updatedHomepage);
     const previousFilename = typeof previousImageUrl === 'string'
       ? previousImageUrl.match(/\/api\/homepage\/profile-image\/(profile-[0-9a-f-]{36}\.(?:jpg|png|webp))$/)?.[1]
       : undefined;
@@ -122,7 +130,7 @@ router.post('/profile-image', requireAdmin, async (req, res, next) => {
         if (cleanupError.code !== 'ENOENT') console.error('Could not remove the replaced profile image:', cleanupError);
       });
     }
-    return res.status(201).json({ success: true, imageUrl: updatedHomepage.brand.imageUrl });
+    return res.status(201).json({ success: true, imageUrl: updatedHomepage.brand.imageUrl, updatedAt });
   } catch (error) {
     if (storedFilename) {
       await unlink(resolveWritablePath('profile-images',  storedFilename)).catch((cleanupError) => {
@@ -135,8 +143,8 @@ router.post('/profile-image', requireAdmin, async (req, res, next) => {
 
 router.post('/reset', requireAdmin, (req, res, next) => {
   try {
-    saveHomepageContent(defaultHomepageContent);
-    return res.json({ success: true, content: defaultHomepageContent });
+    const updatedAt = saveHomepageContent(defaultHomepageContent);
+    return res.json({ success: true, content: defaultHomepageContent, updatedAt });
   } catch (error) {
     return next(error);
   }
