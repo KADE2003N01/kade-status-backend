@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -107,12 +108,16 @@ router.get('/', (req, res, next) => {
   try {
     const documents = database.prepare(`
       SELECT document_id, document_type, title, description, issued_at,
-        institution, filename, updated_at, created_at
+        institution, filename, stored_filename, updated_at, created_at
       FROM portfolio_documents
       ORDER BY CASE document_type WHEN 'cv' THEN 0 WHEN 'document' THEN 1 ELSE 2 END,
         issued_at DESC, title COLLATE NOCASE
     `).all();
-    return res.json({ success: true, documents: documents.map(toPublicDocument) });
+    const available = documents.filter((row) => {
+      if (!row.stored_filename) return true;
+      return existsSync(path.join(privateDocumentsDirectory, row.stored_filename));
+    });
+    return res.json({ success: true, documents: available.map(toPublicDocument) });
   } catch (error) {
     return next(error);
   }
@@ -236,9 +241,11 @@ router.delete('/:documentId', requireAdmin, async (req, res, next) => {
     if (!existing) return res.status(404).json({ success: false, error: 'Document not found.' });
 
     database.prepare('DELETE FROM portfolio_documents WHERE document_id = ?').run(existing.document_id);
-    await unlink(path.join(privateDocumentsDirectory, existing.stored_filename)).catch((cleanupError) => {
-      console.error('Could not remove the deleted document file:', cleanupError);
-    });
+    if (existing.stored_filename) {
+      await unlink(path.join(privateDocumentsDirectory, existing.stored_filename)).catch((cleanupError) => {
+        console.error('Could not remove the deleted document file:', cleanupError);
+      });
+    }
     return res.json({ success: true });
   } catch (error) {
     return next(error);

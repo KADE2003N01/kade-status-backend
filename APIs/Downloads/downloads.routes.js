@@ -392,7 +392,11 @@ router.get('/preview/:documentId', async (req, res, next) => {
     }
 
     const filePath = path.join(privateDocumentsDirectory, document.stored_filename);
-    await access(filePath);
+    try {
+      await access(filePath);
+    } catch {
+      return res.status(404).json({ success: false, error: 'This document is no longer available.' });
+    }
     res.set({
       'Cache-Control': 'private, no-store',
       'X-Content-Type-Options': 'nosniff'
