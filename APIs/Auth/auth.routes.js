@@ -15,11 +15,17 @@ function hashToken(token) {
 }
 
 function getCookieOptions() {
-  const configuredSameSite = (process.env.COOKIE_SAME_SITE || 'lax').toLowerCase();
-  const sameSite = ['strict', 'lax', 'none'].includes(configuredSameSite) ? configuredSameSite : 'lax';
+  const configuredSameSite = (process.env.COOKIE_SAME_SITE || '').toLowerCase();
+  const isProduction = process.env.NODE_ENV === 'production';
+  // The admin frontend and API are served from different domains (e.g. two
+  // separate onrender.com apps), so the session cookie must be SameSite=None
+  // in production or browsers will silently drop it after login.
+  const sameSite = ['strict', 'lax', 'none'].includes(configuredSameSite)
+    ? configuredSameSite
+    : (isProduction ? 'none' : 'lax');
   return {
     httpOnly: true,
-    secure: sameSite === 'none' || process.env.NODE_ENV === 'production',
+    secure: sameSite === 'none' || isProduction,
     sameSite,
     path: '/api',
     maxAge: SESSION_DURATION_MS
