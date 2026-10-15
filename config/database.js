@@ -140,25 +140,38 @@ seedDocument.run(
   '2026-01-01', 'EBC Organization', 'AGENDA_EBC-2026.pdf', 'AGENDA_EBC 2026.pdf', '2026-01-01T00:00:00.000Z'
 );
 
-const bootstrapEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
-const bootstrapPassword = process.env.ADMIN_PASSWORD;
-const bootstrapDisplayName = process.env.ADMIN_DISPLAY_NAME?.trim();
-const hasBootstrapCredentials = Boolean(bootstrapEmail && bootstrapPassword && bootstrapDisplayName);
-
-if (hasBootstrapCredentials) {
-  if (bootstrapPassword.length < 5) {
-    throw new Error('ADMIN_PASSWORD must be at least 5 characters long.');
+const bootstrapAdmins = [
+  {
+    email: process.env.ADMIN_EMAIL?.trim().toLowerCase(),
+    password: process.env.ADMIN_PASSWORD,
+    displayName: process.env.ADMIN_DISPLAY_NAME?.trim()
+  },
+  {
+    email: process.env.ADMIN_EMAIL_2?.trim().toLowerCase(),
+    password: process.env.ADMIN_PASSWORD_2,
+    displayName: process.env.ADMIN_DISPLAY_NAME_2?.trim()
   }
+].filter((account) => account.email && account.password && account.displayName);
 
-  const existingAdmin = database.prepare('SELECT id FROM admin_users LIMIT 1').get();
-  if (!existingAdmin) {
-    const salt = randomBytes(16).toString('hex');
-    const passwordHash = scryptSync(bootstrapPassword, salt, 64).toString('hex');
-    database.prepare(`
-      INSERT INTO admin_users (email, display_name, password_hash)
-      VALUES (?, ?, ?)
-    `).run(bootstrapEmail, bootstrapDisplayName, `${salt}:${passwordHash}`);
-    console.log('Initial admin account created in SQLite.');
+if (bootstrapAdmins.length) {
+  for (const account of bootstrapAdmins) {
+    if (account.password.length < 5) {
+      throw new Error('ADMIN_PASSWORD (and ADMIN_PASSWORD_2, when set) must be at least 5 characters long.');
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account.email)) {
+      throw new Error(`The admin email "${account.email}" is not a valid email address.`);
+    }
+
+    const existingAdmin = database.prepare('SELECT rowid FROM admin_users WHERE email = ?').get(account.email);
+    if (!existingAdmin) {
+      const salt = randomBytes(16).toString('hex');
+      const passwordHash = scryptSync(account.password, salt, 64).toString('hex');
+      database.prepare(`
+        INSERT INTO admin_users (email, display_name, password_hash)
+        VALUES (?, ?, ?)
+      `).run(account.email, account.displayName, `${salt}:${passwordHash}`);
+      console.log(`Admin account created for ${account.email}.`);
+    }
   }
 } else {
   console.warn('Admin login is disabled until ADMIN_EMAIL, ADMIN_PASSWORD, and ADMIN_DISPLAY_NAME are configured.');

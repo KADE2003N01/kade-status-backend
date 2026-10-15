@@ -1,23 +1,15 @@
 ✅ .env file loaded successfully. Parsed variables: [
-  'PORT',
-  'FRONTEND_URL',
-  'VITE_API_BASE_URL',
-  'EMAIL_USER',
-  'EMAIL_PASSWORD',
-  'TWILIO_ACCOUNT_SID',
-  'TWILIO_AUTH_TOKEN',
-  'TWILIO_FROM_NUMBER',
-  'NODE_ENV',
-  'ADMIN_EMAIL',
-  'ADMIN_PASSWORD',
-  'ADMIN_DISPLAY_NAME',
-  'DATABASE_PATH',
+  'PORT',                 'FRONTEND_URL',
+  'VITE_API_BASE_URL',    'EMAIL_USER',
+  'EMAIL_PASSWORD',       'TWILIO_ACCOUNT_SID',
+  'TWILIO_AUTH_TOKEN',    'TWILIO_FROM_NUMBER',
+  'NODE_ENV',             'ADMIN_EMAIL',
+  'ADMIN_PASSWORD',       'ADMIN_DISPLAY_NAME',
+  'ADMIN_EMAIL_2',        'ADMIN_PASSWORD_2',
+  'ADMIN_DISPLAY_NAME_2', 'DATABASE_PATH',
   'PUBLIC_API_URL'
 ]
 ✅ Server running on port 5000
 📡 Allowed Frontend URL: http://localhost:5500,http://127.0.0.1:5500,https://david-portifolio.onrender.com/
 📧 Email configured: kadecomputerscience@gmail.com
 🔑 App Password set: ✅ YES
-2026-10-15T13:21:20.238Z - POST /api/auth/login
-2026-10-15T13:21:20.398Z - GET /api/auth/me
-2026-10-15T13:21:52.846Z - POST /api/auth/login

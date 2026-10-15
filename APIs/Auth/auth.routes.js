@@ -2,6 +2,7 @@ import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import express from 'express';
 import database from '../../config/database.js';
+import { defaultHomepageContent } from '../../config/homepage-content.js';
 
 const router = express.Router();
 const scryptAsync = promisify(scrypt);
@@ -138,6 +139,21 @@ router.post('/login', async (req, res, next) => {
     `).run(hashToken(token), user.id, expiresAt, Date.now());
 
     res.cookie(SESSION_COOKIE, token, getCookieOptions());
+
+    // Remember the most recently signed-in administrator for the public footer.
+    try {
+      const row = database.prepare('SELECT value_json FROM portfolio_settings WHERE setting_key = ?').get('homepage');
+      const content = row ? JSON.parse(row.value_json) : { ...defaultHomepageContent };
+      content.adminName = user.display_name;
+      database.prepare(`
+        INSERT INTO portfolio_settings (setting_key, value_json, updated_at)
+        VALUES ('homepage', ?, ?)
+        ON CONFLICT(setting_key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
+      `).run(JSON.stringify(content), new Date().toISOString());
+    } catch (error) {
+      console.error('Could not update the last signed-in admin name:', error);
+    }
+
     return res.json({
       success: true,
       user: { email: user.email, displayName: user.display_name }

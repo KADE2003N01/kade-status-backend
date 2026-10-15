@@ -93,12 +93,11 @@ export const defaultHomepageContent = {
     ],
     email: 'kadecomputerscience@gmail.com',
     phone: '+250 788 950 833',
-    copyright: '© 2026 David KWIZERA. All rights reserved.',
+    copyright: `© ${new Date().getFullYear()} David KWIZERA. All rights reserved.`,
     builtBy: 'Built by KadeTech',
     contactLabel: 'Contact',
     contactHref: 'tel:+250788950833',
-    sourceCodeLabel: 'Source Code',
-    sourceCodeHref: 'https://github.com/KADE2003N01/kade-status'
+    adminName: 'David KWIZERA'
   }
 };
 
@@ -148,7 +147,10 @@ function validateAgainstTemplate(value, template, path) {
     throw Object.assign(new Error(`${path} must be an object.`), { status: 400 });
   }
   const expectedKeys = Object.keys(template);
-  if (Object.keys(value).length !== expectedKeys.length || expectedKeys.some((key) => !Object.hasOwn(value, key))) {
+  // Allow internal keys the server adds itself (e.g. adminName — the name of the
+  // most recently signed-in administrator, shown in the public footer).
+  const allowedKeys = [...expectedKeys, 'adminName'];
+  if (Object.keys(value).length !== allowedKeys.length || allowedKeys.some((key) => !Object.hasOwn(value, key))) {
     throw Object.assign(new Error(`${path} has missing or unexpected fields.`), { status: 400 });
   }
   for (const key of expectedKeys) {
