@@ -69,14 +69,14 @@ The downloadable CV and EBC PDF files live in `private-documents/`, outside the 
 
 For an existing installation, update the administrator's email in the SQLite `admin_users` table as well as changing `ADMIN_EMAIL`; changing the bootstrap setting alone does not change the stored login email.
 
-For a frontend and API on different sites, use HTTPS and set `COOKIE_SAME_SITE=none`; browsers may restrict third-party cookies, so same-site hosting or a reverse proxy is preferred. Set `FRONTEND_URL` to the exact allowed frontend origin(s), separated by commas. Do not use `*` for authenticated requests.
+The deployed frontend origin (`https://david-portifolio.onrender.com`) and the supported local development origins are allowed by default. `FRONTEND_URL` can add exact frontend origins, separated by commas. Do not use `*` for authenticated requests.
 
 ### 5. Start the Server
 ```bash
 npm start
 ```
 
-Run the backend with `npm start`, then run the React frontend from `kade-status-frontend` with `npm install` and `npm run dev` in a second terminal. Open the URL printed by Vite and visit `src/admin-login.html`. Vite proxies local `/api` requests to the backend at `http://127.0.0.1:5000`, so visitor and admin requests use the same origin during development. Build the static site with `npm run build` and deploy the generated `dist/` directory. The existing visitor and admin `.html` page URLs are generated from the React entry during the build. For separate frontend and backend hosts, set `VITE_PORTFOLIO_API_BASE_URL` to the backend API base URL (for example, `https://api.example.com/api`) when building.
+Run the backend with `npm start`, then run the React frontend from `kade-status-frontend` with `npm install` and `npm run dev` in a second terminal. Open the URL printed by Vite and visit `src/admin-login.html`. Vite proxies local `/api` requests to the backend at `http://127.0.0.1:5000`, so visitor and admin requests use the same origin during development. Build the static site with `npm run build` and deploy the generated `dist/` directory. The existing visitor and admin `.html` page URLs are generated from the React entry during the build. The local frontend uses an ordered backend list: it tries `http://localhost:5000/api` first, then the deployed API (`https://kade-status-backend-e1th.onrender.com/api`) if the local backend cannot be reached. The deployed frontend uses the deployed API only; it does not send requests or administrator credentials to a visitor's local machine. Set `VITE_PORTFOLIO_API_BASE_URL` at build time to add a custom API base URL at the start of the list.
 
 ## Admin Authentication
 

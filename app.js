@@ -27,13 +27,15 @@ const localDevelopmentOrigins = [
   'http://localhost:4173',
   'http://127.0.0.1:4173'
 ];
+const knownFrontendOrigins = [
+  'https://david-portifolio.onrender.com',
+  ...localDevelopmentOrigins
+];
 const configuredOrigins = (process.env.FRONTEND_URL || '')
   .split(',')
   .map((origin) => origin.trim())
   .filter((origin) => origin && origin !== '*');
-const allowedOrigins = process.env.NODE_ENV === 'production'
-  ? configuredOrigins
-  : [...new Set([...localDevelopmentOrigins, ...configuredOrigins])];
+const allowedOrigins = [...new Set([...knownFrontendOrigins, ...configuredOrigins])];
 
 app.use(cors({
   origin: (origin, callback) => {

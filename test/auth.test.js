@@ -87,6 +87,20 @@ test('Vite frontend origin can make credentialed API requests', async () => {
   assert.equal(response.headers.get('access-control-allow-credentials'), 'true');
 });
 
+test('deployed frontend origin can make credentialed API requests', async () => {
+  const response = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'OPTIONS',
+    headers: {
+      Origin: 'https://david-portifolio.onrender.com',
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': 'content-type'
+    }
+  });
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get('access-control-allow-origin'), 'https://david-portifolio.onrender.com');
+  assert.equal(response.headers.get('access-control-allow-credentials'), 'true');
+});
+
 test('admin credentials issue a revocable session and the admin name comes from SQLite', async () => {
   const anonymous = await fetch(`${baseUrl}/api/auth/me`, requestOptions);
   assert.equal(anonymous.status, 401);
