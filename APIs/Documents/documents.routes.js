@@ -1,15 +1,15 @@
-import { randomUUID } from 'node:crypto';
+﻿import { randomUUID } from 'node:crypto';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import database from '../../config/database.js';
+import { resolveWritableDirectory, resolveWritablePath } from '../../config/storage.js';
 import { requireAdmin } from '../Auth/auth.routes.js';
 
 const router = express.Router();
-const backendDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const privateDocumentsDirectory = path.join(backendDirectory, 'private-documents');
+const privateDocumentsDirectory = resolveWritableDirectory('private-documents');
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
 function toPublicDocument(row) {
@@ -100,7 +100,7 @@ function parseCvMetadata(body) {
 async function savePdf(content, prefix) {
   await mkdir(privateDocumentsDirectory, { recursive: true });
   const storedFilename = `${prefix}-${randomUUID()}.pdf`;
-  await writeFile(path.join(privateDocumentsDirectory, storedFilename), content, { flag: 'wx' });
+  await writeFile(resolveWritablePath('private-documents',  storedFilename), content, { flag: 'wx' });
   return storedFilename;
 }
 
@@ -115,7 +115,7 @@ router.get('/', (req, res, next) => {
     `).all();
     const available = documents.filter((row) => {
       if (!row.stored_filename) return true;
-      return existsSync(path.join(privateDocumentsDirectory, row.stored_filename));
+      return existsSync(resolveWritablePath('private-documents', row.stored_filename));
     });
     return res.json({ success: true, documents: available.map(toPublicDocument) });
   } catch (error) {
@@ -144,7 +144,7 @@ router.post('/cv', requireAdmin, async (req, res, next) => {
     return res.status(201).json({ success: true, document: toPublicDocument(document) });
   } catch (error) {
     if (storedFilename) {
-      await unlink(path.join(privateDocumentsDirectory, storedFilename)).catch((cleanupError) => {
+      await unlink(resolveWritablePath('private-documents',  storedFilename)).catch((cleanupError) => {
         console.error('Could not clean up an unpublished CV file:', cleanupError);
       });
     }
@@ -174,7 +174,7 @@ router.post('/certificates', requireAdmin, async (req, res, next) => {
     return res.status(201).json({ success: true, document: toPublicDocument(document) });
   } catch (error) {
     if (storedFilename) {
-      await unlink(path.join(privateDocumentsDirectory, storedFilename)).catch((cleanupError) => {
+      await unlink(resolveWritablePath('private-documents',  storedFilename)).catch((cleanupError) => {
         console.error('Could not clean up an unpublished certificate file:', cleanupError);
       });
     }
@@ -213,7 +213,7 @@ router.put('/certificates/:documentId', requireAdmin, async (req, res, next) => 
       existing.document_id
     );
     if (storedFilename && storedFilename !== existing.stored_filename) {
-      await unlink(path.join(privateDocumentsDirectory, existing.stored_filename)).catch((cleanupError) => {
+      await unlink(resolveWritablePath('private-documents',  existing.stored_filename)).catch((cleanupError) => {
         console.error('Could not remove the replaced document file:', cleanupError);
       });
     }
@@ -225,7 +225,7 @@ router.put('/certificates/:documentId', requireAdmin, async (req, res, next) => 
     return res.json({ success: true, document: toPublicDocument(document) });
   } catch (error) {
     if (storedFilename) {
-      await unlink(path.join(privateDocumentsDirectory, storedFilename)).catch((cleanupError) => {
+      await unlink(resolveWritablePath('private-documents',  storedFilename)).catch((cleanupError) => {
         console.error('Could not clean up an unpublished document file:', cleanupError);
       });
     }
@@ -242,7 +242,7 @@ router.delete('/:documentId', requireAdmin, async (req, res, next) => {
 
     database.prepare('DELETE FROM portfolio_documents WHERE document_id = ?').run(existing.document_id);
     if (existing.stored_filename) {
-      await unlink(path.join(privateDocumentsDirectory, existing.stored_filename)).catch((cleanupError) => {
+      await unlink(resolveWritablePath('private-documents',  existing.stored_filename)).catch((cleanupError) => {
         console.error('Could not remove the deleted document file:', cleanupError);
       });
     }

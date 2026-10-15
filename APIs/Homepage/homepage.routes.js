@@ -1,9 +1,10 @@
-import { randomUUID } from 'node:crypto';
+﻿import { randomUUID } from 'node:crypto';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import database from '../../config/database.js';
+import { resolveWritablePath } from '../../config/storage.js';
 import { defaultHomepageContent, validateHomepageContent } from '../../config/homepage-content.js';
 import { requireAdmin } from '../Auth/auth.routes.js';
 
@@ -61,7 +62,7 @@ router.get('/profile-image/:filename', (req, res, next) => {
   }
   const extension = path.extname(filename);
   const contentType = extension === '.jpg' ? 'image/jpeg' : `image/${extension.slice(1)}`;
-  res.sendFile(path.join(profileImagesDirectory, filename), {
+  res.sendFile(resolveWritablePath('profile-images',  filename), {
     headers: {
       'Content-Type': contentType,
       'X-Content-Type-Options': 'nosniff',
@@ -105,7 +106,7 @@ router.post('/profile-image', requireAdmin, async (req, res, next) => {
     await mkdir(profileImagesDirectory, { recursive: true });
     const { extension } = profileImageTypes[mimeType];
     storedFilename = `profile-${randomUUID()}.${extension}`;
-    await writeFile(path.join(profileImagesDirectory, storedFilename), content, { flag: 'wx' });
+    await writeFile(resolveWritablePath('profile-images',  storedFilename), content, { flag: 'wx' });
 
     const homepage = structuredClone(readHomepageContent());
     const previousImageUrl = homepage.brand.imageUrl;
@@ -117,14 +118,14 @@ router.post('/profile-image', requireAdmin, async (req, res, next) => {
       ? previousImageUrl.match(/\/api\/homepage\/profile-image\/(profile-[0-9a-f-]{36}\.(?:jpg|png|webp))$/)?.[1]
       : undefined;
     if (previousFilename && previousFilename !== storedFilename) {
-      await unlink(path.join(profileImagesDirectory, previousFilename)).catch((cleanupError) => {
+      await unlink(resolveWritablePath('profile-images',  previousFilename)).catch((cleanupError) => {
         if (cleanupError.code !== 'ENOENT') console.error('Could not remove the replaced profile image:', cleanupError);
       });
     }
     return res.status(201).json({ success: true, imageUrl: updatedHomepage.brand.imageUrl });
   } catch (error) {
     if (storedFilename) {
-      await unlink(path.join(profileImagesDirectory, storedFilename)).catch((cleanupError) => {
+      await unlink(resolveWritablePath('profile-images',  storedFilename)).catch((cleanupError) => {
         console.error('Could not clean up an unpublished profile image:', cleanupError);
       });
     }

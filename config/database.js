@@ -1,11 +1,27 @@
 import Database from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, scryptSync } from 'node:crypto';
 
 const backendDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const databasePath = process.env.DATABASE_PATH || path.join(backendDirectory, 'data', 'portfolio.sqlite');
+// On Vercel the filesystem is read-only except /tmp, so the database must live there.
+const isVercel = Boolean(process.env.VERCEL);
+let databasePath = process.env.DATABASE_PATH
+  || (isVercel ? '/tmp/portfolio.sqlite' : path.join(backendDirectory, 'data', 'portfolio.sqlite'));
+
+// Seed the ephemeral database from the bundled copy on first boot in a lambda instance.
+if (isVercel && !process.env.DATABASE_PATH && !existsSync(databasePath)) {
+  try {
+    const bundledDatabase = path.join(backendDirectory, 'data', 'portfolio.sqlite');
+    if (existsSync(bundledDatabase)) {
+      copyFileSync(bundledDatabase, databasePath);
+      console.log('Seeded /tmp database from bundled portfolio.sqlite.');
+    }
+  } catch (seedError) {
+    console.error('Could not seed the /tmp database:', seedError.message);
+  }
+}
 mkdirSync(path.dirname(databasePath), { recursive: true });
 
 const database = new Database(databasePath);

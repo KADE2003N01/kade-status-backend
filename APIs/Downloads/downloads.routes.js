@@ -1,9 +1,10 @@
-import { createHash, randomBytes, randomInt, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
+﻿import { createHash, randomBytes, randomInt, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { access } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import database from '../../config/database.js';
+import { resolveWritablePath } from '../../config/storage.js';
 import { getMailFromAddress, getTransporter } from '../../config/mailer.js';
 import { requireAdmin } from '../Auth/auth.routes.js';
 
@@ -152,7 +153,7 @@ router.post('/request', async (req, res, next) => {
       return res.status(400).json({ success: false, error: 'Select a valid document.' });
     }
 
-    await access(path.join(privateDocumentsDirectory, document.storedName));
+    await access(resolveWritablePath('private-documents',  document.storedName));
     const transporter = channel === 'email' && process.env.NODE_ENV !== 'test' ? getTransporter() : null;
     const smsConfigured = Boolean(
       process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM_NUMBER
@@ -316,7 +317,7 @@ router.post('/verify', async (req, res, next) => {
       database.prepare('DELETE FROM download_email_verifications WHERE challenge_id = ?').run(challengeId);
       return res.status(410).json({ success: false, error: 'This document is no longer available.' });
     }
-    await access(path.join(privateDocumentsDirectory, document.stored_filename));
+    await access(resolveWritablePath('private-documents',  document.stored_filename));
 
     const requestedAt = new Date().toISOString();
     const token = randomBytes(32).toString('base64url');
@@ -391,7 +392,7 @@ router.get('/preview/:documentId', async (req, res, next) => {
       return res.status(404).json({ success: false, error: 'This document is no longer available.' });
     }
 
-    const filePath = path.join(privateDocumentsDirectory, document.stored_filename);
+    const filePath = resolveWritablePath('private-documents',  document.stored_filename);
     try {
       await access(filePath);
     } catch {
@@ -425,7 +426,7 @@ router.post('/preview', (req, res, next) => {
       return res.status(403).json({ success: false, error: 'This preview has expired. Submit your details again.' });
     }
 
-    const filePath = path.join(privateDocumentsDirectory, accessToken.document.storedName);
+    const filePath = resolveWritablePath('private-documents',  accessToken.document.storedName);
     res.sendFile(filePath, {
       headers: {
         'Content-Type': 'application/pdf',
@@ -450,7 +451,7 @@ router.post('/file', (req, res, next) => {
       return res.status(403).json({ success: false, error: 'This download link has expired. Submit your details again.' });
     }
 
-    const filePath = path.join(privateDocumentsDirectory, accessToken.document.storedName);
+    const filePath = resolveWritablePath('private-documents',  accessToken.document.storedName);
     res.download(filePath, accessToken.document.filename, (error) => {
       if (error) {
         if (!res.headersSent) return next(error);
