@@ -39,7 +39,14 @@ function clearSessionCookie(res) {
 }
 
 function getSessionUser(req) {
-  const token = req.cookies?.[SESSION_COOKIE];
+  // Primary: the httpOnly session cookie. Fallback: an Authorization bearer
+  // token, so sign-in still works on mobile browsers that block third-party
+  // cookies (the admin frontend and API are served from different domains).
+  let token = req.cookies?.[SESSION_COOKIE];
+  if (!token) {
+    const header = req.headers?.authorization || '';
+    if (header.startsWith('Bearer ')) token = header.slice(7).trim() || null;
+  }
   if (!token) return null;
 
   const now = Date.now();
@@ -156,7 +163,10 @@ router.post('/login', async (req, res, next) => {
 
     return res.json({
       success: true,
-      user: { email: user.email, displayName: user.display_name }
+      user: { email: user.email, displayName: user.display_name },
+      // Fallback session token for browsers that block third-party cookies
+      // (common on mobile). Harmless when the cookie was saved normally.
+      sessionToken: token
     });
   } catch (error) {
     return next(error);
@@ -172,7 +182,11 @@ router.get('/me', requireAdmin, (req, res) => {
 });
 
 router.post('/logout', (req, res) => {
-  const token = req.cookies?.[SESSION_COOKIE];
+  let token = req.cookies?.[SESSION_COOKIE];
+  if (!token) {
+    const header = req.headers?.authorization || '';
+    if (header.startsWith('Bearer ')) token = header.slice(7).trim() || null;
+  }
   if (token) {
     database.prepare('DELETE FROM admin_sessions WHERE token_hash = ?').run(hashToken(token));
   }
