@@ -32,6 +32,19 @@ const profileImageTypes = {
   }
 };
 
+function publicApiBaseUrl() {
+  const configuredUrl = process.env.PUBLIC_API_URL;
+  if (!configuredUrl) return '';
+  try {
+    const url = new URL(configuredUrl);
+    const isLocalHost = ['localhost', '127.0.0.1', '::1'].includes(url.hostname.toLowerCase());
+    if (url.protocol !== 'https:' || isLocalHost) return '';
+    return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
+  } catch {
+    return '';
+  }
+}
+
 function readHomepageRecord() {
   const row = database.prepare('SELECT value_json, updated_at FROM portfolio_settings WHERE setting_key = ?').get(CONTENT_KEY);
   return row
@@ -116,7 +129,10 @@ router.post('/profile-image', requireAdmin, async (req, res, next) => {
     const homepage = structuredClone(readHomepageContent());
     const previousImageUrl = homepage.brand.imageUrl;
     const imagePath = `/api/homepage/profile-image/${storedFilename}`;
-    const publicApiBase = process.env.PUBLIC_API_URL?.replace(/\/+$/, '');
+    // A stale localhost PUBLIC_API_URL makes every visitor's browser request
+    // the image from their own computer. Keep the image path relative unless
+    // the configured API address is a valid public HTTPS URL.
+    const publicApiBase = publicApiBaseUrl();
     homepage.brand.imageUrl = publicApiBase ? `${publicApiBase}${imagePath}` : imagePath;
     const updatedHomepage = validateHomepageContent(homepage);
     const updatedAt = saveHomepageContent(updatedHomepage);

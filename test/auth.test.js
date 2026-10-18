@@ -17,6 +17,7 @@ process.env.NODE_ENV = 'test';
 process.env.EMAIL_USER = '';
 process.env.EMAIL_PASSWORD = '';
 process.env.DOWNLOAD_VERIFICATION_TEST_CODE = '246810';
+process.env.PUBLIC_API_URL = 'http://localhost:5000';
 
 const [{ default: app }, { default: database }] = await Promise.all([
   import('../app.js'),
@@ -279,6 +280,7 @@ test('admin credentials issue a revocable session and the admin name comes from 
   });
   assert.equal(profileImageUpload.status, 201);
   const profileImage = await profileImageUpload.json();
+  assert.match(profileImage.imageUrl, /^\/api\/homepage\/profile-image\//);
   assert.match(profileImage.imageUrl, /\/api\/homepage\/profile-image\/profile-[0-9a-f-]{36}\.png$/);
   const profileImageUrl = new URL(profileImage.imageUrl, baseUrl);
   const homepageWithProfileImage = await fetch(`${baseUrl}/api/homepage`, requestOptions);
