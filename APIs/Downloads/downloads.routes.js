@@ -1,7 +1,5 @@
 ﻿import { createHash, randomBytes, randomInt, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { access } from 'node:fs/promises';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import express from 'express';
 import database from '../../config/database.js';
 import { resolveWritablePath } from '../../config/storage.js';
@@ -9,8 +7,6 @@ import { getMailFromAddress, getTransporter } from '../../config/mailer.js';
 import { requireAdmin } from '../Auth/auth.routes.js';
 
 const router = express.Router();
-const backendDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const privateDocumentsDirectory = path.join(backendDirectory, 'private-documents');
 const TOKEN_DURATION_MS = 5 * 60 * 1000;
 const VERIFICATION_DURATION_MS = 10 * 60 * 1000;
 const VERIFICATION_WINDOW_MS = 15 * 60 * 1000;

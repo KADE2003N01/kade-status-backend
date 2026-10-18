@@ -59,7 +59,9 @@ COOKIE_SAME_SITE=lax
 NODE_ENV=development
 ```
 
-`PUBLIC_API_URL` is optional for local use. Set it to the public backend origin (without a trailing `/api`) when the backend is behind a reverse proxy, so uploaded profile-image links use the correct public address.
+`PUBLIC_API_URL` is optional. Without it, uploaded profile images use a same-origin `/api/...` URL, which works with the local Vite proxy and the Render frontend rewrite. Set it to the public backend origin (without a trailing `/api`) only when you need image URLs to point directly to a separate API domain.
+
+For Render production, attach a persistent disk to the backend web service, mount it at `/var/data`, and set `STORAGE_DIR=/var/data` and `DATABASE_PATH=/var/data/portfolio.sqlite` in the service environment. Profile images and uploaded documents are written under `STORAGE_DIR`; SQLite uses `DATABASE_PATH`. Without a persistent disk, uploads and local database changes can be lost on service restart or redeploy. `STORAGE_DIR` is optional for local development.
 
 The first server start creates the administrator account in SQLite from the `ADMIN_*` values. The password is stored as a salted scrypt hash; the administrator display name is read from the database after sign-in. Once the account exists, sign-in uses the database record and does not require the `ADMIN_*` values to remain configured. Changing bootstrap environment values does not overwrite an existing administrator record. The database file is excluded from Git; production hosting must provide persistent storage for `DATABASE_PATH`.
 
@@ -68,6 +70,21 @@ The first server start creates the administrator account in SQLite from the `ADM
 The downloadable CV and EBC PDF files live in `private-documents/`, outside the public frontend assets. CV and certificate PDFs uploaded through the admin dashboard are stored in that same private directory, while their public display details are stored in SQLite. Profile images uploaded from the landing-page editor are checked for supported image signatures and saved under the backend's `profile-images/` directory. Keep these backend assets deployed and back them up with the database.
 
 For an existing installation, update the administrator's email in the SQLite `admin_users` table as well as changing `ADMIN_EMAIL`; changing the bootstrap setting alone does not change the stored login email.
+
+### Reset an administrator password
+
+From the backend directory, run `npm run admin:reset-password`. Enter the administrator's email and a new password of at least 12 characters when prompted. Password input is hidden, the database stores only a salted hash, and existing sessions for that administrator are revoked. The command uses `DATABASE_PATH` from `.env` or the default `data/portfolio.sqlite` database.
+
+### Quick database commands
+
+Run these from the backend directory:
+
+- `npm run admin:list` lists administrator email addresses, display names, and creation dates. It never displays password hashes.
+- `npm run admin:add` adds an administrator directly to SQLite. Enter their email and display name, then a new password of at least 12 characters when prompted. Password input is hidden.
+- `npm run db:inspect` lists database tables and their row counts without printing their contents.
+- `npm run admin:reset-password` resets an existing administrator password and revokes that administrator's sessions.
+
+These commands use the same SQLite file configured by `DATABASE_PATH` in `.env`.
 
 The deployed frontend origin (`https://david-portifolio.onrender.com`) and the supported local development origins are allowed by default. `FRONTEND_URL` can add exact frontend origins, separated by commas. Do not use `*` for authenticated requests.
 

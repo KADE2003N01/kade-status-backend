@@ -8,8 +8,6 @@ const router = express.Router();
 const scryptAsync = promisify(scrypt);
 const SESSION_COOKIE = 'kade_admin_session';
 const SESSION_DURATION_MS = 8 * 60 * 60 * 1000;
-const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const MAX_LOGIN_ATTEMPTS = 5;
 
 function hashToken(token) {
   return createHash('sha256').update(token).digest('hex');
@@ -70,35 +68,6 @@ export function requireAdmin(req, res, next) {
   return next();
 }
 
-function getAttempts(ipAddress) {
-  const now = Date.now();
-  const attempt = database.prepare(`
-    SELECT failed_attempts, window_started_at
-    FROM admin_login_attempts
-    WHERE ip_address = ?
-  `).get(ipAddress);
-
-  if (!attempt || now - attempt.window_started_at >= LOGIN_WINDOW_MS) return 0;
-  return attempt.failed_attempts;
-}
-
-function recordFailedAttempt(ipAddress) {
-  const now = Date.now();
-  database.prepare(`
-    INSERT INTO admin_login_attempts (ip_address, failed_attempts, window_started_at)
-    VALUES (?, 1, ?)
-    ON CONFLICT(ip_address) DO UPDATE SET
-      failed_attempts = CASE
-        WHEN ? - window_started_at >= ? THEN 1
-        ELSE failed_attempts + 1
-      END,
-      window_started_at = CASE
-        WHEN ? - window_started_at >= ? THEN ?
-        ELSE window_started_at
-      END
-  `).run(ipAddress, now, now, LOGIN_WINDOW_MS, now, LOGIN_WINDOW_MS, now);
-}
-
 router.post('/login', async (req, res, next) => {
   try {
     if (!database.prepare('SELECT id FROM admin_users LIMIT 1').get()) {
@@ -109,11 +78,6 @@ router.post('/login', async (req, res, next) => {
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
     if (!email || !password || email.length > 254 || password.length > 1024) {
       return res.status(400).json({ success: false, error: 'Enter your email and password.' });
-    }
-
-    const ipAddress = req.ip || req.socket.remoteAddress || 'unknown';
-    if (getAttempts(ipAddress) >= MAX_LOGIN_ATTEMPTS) {
-      return res.status(429).json({ success: false, error: 'Too many sign-in attempts. Try again in 15 minutes.' });
     }
 
     const user = database.prepare(`
@@ -131,11 +95,9 @@ router.post('/login', async (req, res, next) => {
     }
 
     if (!user || !isValidPassword) {
-      recordFailedAttempt(ipAddress);
       return res.status(401).json({ success: false, error: 'Email or password is incorrect.' });
     }
 
-    database.prepare('DELETE FROM admin_login_attempts WHERE ip_address = ?').run(ipAddress);
     database.prepare('DELETE FROM admin_sessions WHERE expires_at <= ?').run(Date.now());
 
     const token = randomBytes(32).toString('base64url');

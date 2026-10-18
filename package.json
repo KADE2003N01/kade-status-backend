@@ -5,22 +5,29 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
+    "admin:add": "node scripts/add-admin.js",
+    "admin:list": "node scripts/list-admins.js",
+    "admin:reset-password": "node scripts/reset-admin-password.js",
+    "db:inspect": "node scripts/inspect-database.js",
     "test": "node --test"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "better-sqlite3": "^13.0.3",
+    "better-sqlite3": "^12.10.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^16.6.1",
     "express": "^4.22.3",
     "helmet": "^7.2.0",
-    "nodemailer": "6.9.16",
+    "nodemailer": "^10.1.4",
     "twilio": "^6.2.0"
   },
   "overrides": {
     "qs": "^6.16.0"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.10.0": true
   }
 }

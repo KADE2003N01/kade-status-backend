@@ -3,11 +3,12 @@ import { after, test } from 'node:test';
 import { existsSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { defaultHomepageContent, validateHomepageContent } from '../config/homepage-content.js';
 
 const databasePath = path.join(tmpdir(), `kade-auth-test-${process.pid}.sqlite`);
+const storageDirectory = path.join(tmpdir(), `kade-auth-storage-${process.pid}`);
 process.env.DATABASE_PATH = databasePath;
+process.env.STORAGE_DIR = storageDirectory;
 process.env.ADMIN_EMAIL = 'admin-test@example.com';
 process.env.ADMIN_PASSWORD = 'test5';
 process.env.ADMIN_DISPLAY_NAME = 'Database Test Admin';
@@ -55,15 +56,14 @@ after(async () => {
     SELECT stored_filename FROM portfolio_documents
     WHERE stored_filename LIKE 'cv-%' OR stored_filename LIKE 'certificate-%'
   `).all();
-  const backendDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   for (const file of uploadedFiles) {
-    const filePath = path.join(backendDirectory, 'private-documents', file.stored_filename);
+    const filePath = path.join(storageDirectory, 'private-documents', file.stored_filename);
     if (existsSync(filePath)) unlinkSync(filePath);
   }
   const homepageRow = database.prepare("SELECT value_json FROM portfolio_settings WHERE setting_key = 'homepage'").get();
   const imageFilename = homepageRow?.value_json.match(/profile-[0-9a-f-]{36}\.(?:jpg|png|webp)/)?.[0];
   if (imageFilename) {
-    const imagePath = path.join(backendDirectory, 'profile-images', imageFilename);
+    const imagePath = path.join(storageDirectory, 'profile-images', imageFilename);
     if (existsSync(imagePath)) unlinkSync(imagePath);
   }
   database.close();
@@ -280,9 +280,10 @@ test('admin credentials issue a revocable session and the admin name comes from 
   assert.equal(profileImageUpload.status, 201);
   const profileImage = await profileImageUpload.json();
   assert.match(profileImage.imageUrl, /\/api\/homepage\/profile-image\/profile-[0-9a-f-]{36}\.png$/);
+  const profileImageUrl = new URL(profileImage.imageUrl, baseUrl);
   const homepageWithProfileImage = await fetch(`${baseUrl}/api/homepage`, requestOptions);
   assert.equal((await homepageWithProfileImage.json()).content.brand.imageUrl, profileImage.imageUrl);
-  const uploadedProfileImage = await fetch(profileImage.imageUrl);
+  const uploadedProfileImage = await fetch(profileImageUrl);
   assert.equal(uploadedProfileImage.status, 200);
   assert.equal(uploadedProfileImage.headers.get('content-type'), 'image/png');
   assert.deepEqual(Buffer.from(await uploadedProfileImage.arrayBuffer()), profileImageBytes);
@@ -300,7 +301,7 @@ test('admin credentials issue a revocable session and the admin name comes from 
     body: JSON.stringify({ image: `data:image/png;base64,${profileImageBytes.toString('base64')}` })
   });
   assert.equal(replacementProfileImage.status, 201);
-  assert.equal((await fetch(profileImage.imageUrl)).status, 404);
+  assert.equal((await fetch(profileImageUrl)).status, 404);
 
   const authenticated = await fetch(`${baseUrl}/api/auth/me`, {
     headers: { ...requestOptions.headers, Cookie: cookie }
@@ -808,8 +809,8 @@ test('admin credentials issue a revocable session and the admin name comes from 
   assert.equal(revoked.status, 401);
 });
 
-test('admin login rate limits repeated invalid credentials', async () => {
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+test('admin login allows retries and rejects invalid credentials without a lockout', async () => {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
     const response = await fetch(`${baseUrl}/api/auth/login`, {
       ...requestOptions,
       method: 'POST',
@@ -817,11 +818,4 @@ test('admin login rate limits repeated invalid credentials', async () => {
     });
     assert.equal(response.status, 401);
   }
-
-  const limited = await fetch(`${baseUrl}/api/auth/login`, {
-    ...requestOptions,
-    method: 'POST',
-    body: JSON.stringify({ email: 'admin-test@example.com', password: 'incorrect-password' })
-  });
-  assert.equal(limited.status, 429);
 });

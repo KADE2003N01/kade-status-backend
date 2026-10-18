@@ -1,17 +1,15 @@
 ﻿import { randomUUID } from 'node:crypto';
-import { mkdir, unlink, writeFile } from 'node:fs/promises';
+import { unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import express from 'express';
 import database from '../../config/database.js';
-import { resolveWritablePath } from '../../config/storage.js';
+import { resolveWritableDirectory, resolveWritablePath } from '../../config/storage.js';
 import { defaultHomepageContent, validateHomepageContent } from '../../config/homepage-content.js';
 import { requireAdmin } from '../Auth/auth.routes.js';
 
 const router = express.Router();
 const CONTENT_KEY = 'homepage';
-const backendDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const profileImagesDirectory = path.join(backendDirectory, 'profile-images');
+const profileImagesDirectory = resolveWritableDirectory('profile-images');
 const MAX_PROFILE_IMAGE_SIZE = 5 * 1024 * 1024;
 const profileImageTypes = {
   'image/jpeg': { extension: 'jpg', matches: (buffer) => buffer[0] === 0xff && buffer[1] === 0xd8 && buffer.at(-2) === 0xff && buffer.at(-1) === 0xd9 },
@@ -111,15 +109,15 @@ router.post('/profile-image', requireAdmin, async (req, res, next) => {
       return res.status(400).json({ success: false, error: 'The uploaded file does not match a supported image format or exceeds 5 MB.' });
     }
 
-    await mkdir(profileImagesDirectory, { recursive: true });
     const { extension } = profileImageTypes[mimeType];
     storedFilename = `profile-${randomUUID()}.${extension}`;
     await writeFile(resolveWritablePath('profile-images',  storedFilename), content, { flag: 'wx' });
 
     const homepage = structuredClone(readHomepageContent());
     const previousImageUrl = homepage.brand.imageUrl;
-    const publicApiBase = (process.env.PUBLIC_API_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
-    homepage.brand.imageUrl = `${publicApiBase}/api/homepage/profile-image/${storedFilename}`;
+    const imagePath = `/api/homepage/profile-image/${storedFilename}`;
+    const publicApiBase = process.env.PUBLIC_API_URL?.replace(/\/+$/, '');
+    homepage.brand.imageUrl = publicApiBase ? `${publicApiBase}${imagePath}` : imagePath;
     const updatedHomepage = validateHomepageContent(homepage);
     const updatedAt = saveHomepageContent(updatedHomepage);
     const previousFilename = typeof previousImageUrl === 'string'

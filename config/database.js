@@ -28,12 +28,6 @@ database.exec(`
     created_at INTEGER NOT NULL
   );
 
-  CREATE TABLE IF NOT EXISTS admin_login_attempts (
-    ip_address TEXT PRIMARY KEY,
-    failed_attempts INTEGER NOT NULL,
-    window_started_at INTEGER NOT NULL
-  );
-
   CREATE TABLE IF NOT EXISTS portfolio_settings (
     setting_key TEXT PRIMARY KEY,
     value_json TEXT NOT NULL,
