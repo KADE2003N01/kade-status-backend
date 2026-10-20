@@ -97,6 +97,25 @@ function parseCvMetadata(body) {
   return { title, description, issuedAt: issuedAt || null, institution: institution || null };
 }
 
+function normalizeDocumentName(value) {
+  return String(value || '').trim().normalize('NFKC').toLocaleLowerCase().replace(/\.pdf$/i, '');
+}
+
+function ensureUniqueDocumentNames({ title, filename }, excludedDocumentId = '') {
+  const names = new Set([normalizeDocumentName(title), normalizeDocumentName(filename)].filter(Boolean));
+  const existingDocuments = database.prepare(`
+    SELECT document_id, title, filename FROM portfolio_documents
+    WHERE document_id <> ?
+  `).all(excludedDocumentId);
+  const duplicate = existingDocuments.find((document) =>
+    names.has(normalizeDocumentName(document.title))
+    || names.has(normalizeDocumentName(document.filename))
+  );
+  if (duplicate) {
+    throw Object.assign(new Error('A document with this title or file name is already published. Choose a unique title and PDF file.'), { status: 409 });
+  }
+}
+
 async function savePdf(content, prefix) {
   await mkdir(privateDocumentsDirectory, { recursive: true });
   const storedFilename = `${prefix}-${randomUUID()}.pdf`;
@@ -128,6 +147,7 @@ router.post('/cv', requireAdmin, async (req, res, next) => {
   try {
     const metadata = parseCvMetadata(req.body);
     const { filename, content } = parseDocumentFile(req.body);
+    ensureUniqueDocumentNames({ title: metadata.title, filename });
     storedFilename = await savePdf(content, 'cv');
     const documentId = `cv-${randomUUID()}`;
     const updatedAt = new Date().toISOString();
@@ -157,6 +177,7 @@ router.post('/certificates', requireAdmin, async (req, res, next) => {
   try {
     const metadata = parseMetadata(req.body);
     const { filename, content } = parseDocumentFile(req.body);
+    ensureUniqueDocumentNames({ title: metadata.title, filename });
     const documentId = `certificate-${randomUUID()}`;
     storedFilename = await savePdf(content, documentId);
     const updatedAt = new Date().toISOString();
@@ -195,6 +216,7 @@ router.put('/certificates/:documentId', requireAdmin, async (req, res, next) => 
     const metadata = isCv ? parseCvMetadata(req.body) : parseMetadata(req.body);
     const hasFile = typeof req.body?.file === 'string' && req.body.file.length > 0;
     const upload = hasFile ? parseDocumentFile(req.body) : null;
+    ensureUniqueDocumentNames({ title: metadata.title, filename: upload?.filename ?? existing.filename }, existing.document_id);
     if (upload) storedFilename = await savePdf(upload.content, existing.document_id);
     const updatedAt = new Date().toISOString();
     database.prepare(`

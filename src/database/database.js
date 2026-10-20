@@ -16,6 +16,7 @@ database.exec(`
     email TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
     password_hash TEXT NOT NULL,
+    phone TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -41,7 +42,15 @@ database.exec(`
     document_id TEXT NOT NULL,
     document_label TEXT NOT NULL,
     requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    downloaded_at TEXT
+    downloaded_at TEXT,
+    download_status TEXT NOT NULL DEFAULT 'requested'
+  );
+
+  CREATE TABLE IF NOT EXISTS admin_password_resets (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS download_email_verifications (
@@ -92,6 +101,19 @@ const downloadEnquiryColumns = new Set(
 if (!downloadEnquiryColumns.has('reason')) {
   database.exec("ALTER TABLE download_enquiries ADD COLUMN reason TEXT NOT NULL DEFAULT ''");
 }
+if (!downloadEnquiryColumns.has('download_status')) {
+  database.exec("ALTER TABLE download_enquiries ADD COLUMN download_status TEXT NOT NULL DEFAULT 'requested'");
+  database.exec("UPDATE download_enquiries SET download_status = 'downloaded' WHERE downloaded_at IS NOT NULL");
+}
+if (!downloadEnquiryColumns.has('phone')) database.exec('ALTER TABLE download_enquiries ADD COLUMN phone TEXT');
+
+const verificationColumns = new Set(
+  database.prepare('PRAGMA table_info(download_email_verifications)').all().map((column) => column.name)
+);
+if (!verificationColumns.has('phone')) database.exec('ALTER TABLE download_email_verifications ADD COLUMN phone TEXT');
+
+const adminColumns = new Set(database.prepare('PRAGMA table_info(admin_users)').all().map((column) => column.name));
+if (!adminColumns.has('phone')) database.exec('ALTER TABLE admin_users ADD COLUMN phone TEXT');
 
 // Track the real upload date of every document (existing rows keep NULL = seeded defaults).
 const documentColumns = new Set(
@@ -121,12 +143,14 @@ const bootstrapAdmins = [
   {
     email: process.env.ADMIN_EMAIL?.trim().toLowerCase(),
     password: process.env.ADMIN_PASSWORD,
-    displayName: process.env.ADMIN_DISPLAY_NAME?.trim()
+    displayName: process.env.ADMIN_DISPLAY_NAME?.trim(),
+    phone: process.env.ADMIN_PHONE?.trim() || null
   },
   {
     email: process.env.ADMIN_EMAIL_2?.trim().toLowerCase(),
     password: process.env.ADMIN_PASSWORD_2,
-    displayName: process.env.ADMIN_DISPLAY_NAME_2?.trim()
+    displayName: process.env.ADMIN_DISPLAY_NAME_2?.trim(),
+    phone: process.env.ADMIN_PHONE_2?.trim() || null
   }
 ].filter((account) => account.email && account.password && account.displayName);
 
@@ -144,10 +168,12 @@ if (bootstrapAdmins.length) {
       const salt = randomBytes(16).toString('hex');
       const passwordHash = scryptSync(account.password, salt, 64).toString('hex');
       database.prepare(`
-        INSERT INTO admin_users (email, display_name, password_hash)
-        VALUES (?, ?, ?)
-      `).run(account.email, account.displayName, `${salt}:${passwordHash}`);
+        INSERT INTO admin_users (email, display_name, password_hash, phone)
+        VALUES (?, ?, ?, ?)
+      `).run(account.email, account.displayName, `${salt}:${passwordHash}`, account.phone);
       console.log(`Admin account created for ${account.email}.`);
+    } else if (account.phone) {
+      database.prepare('UPDATE admin_users SET phone = ? WHERE email = ?').run(account.phone, account.email);
     }
   }
 } else {

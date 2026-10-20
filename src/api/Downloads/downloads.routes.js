@@ -12,7 +12,6 @@ const VERIFICATION_DURATION_MS = 10 * 60 * 1000;
 const VERIFICATION_WINDOW_MS = 15 * 60 * 1000;
 const MAX_CODE_ATTEMPTS = 5;
 const MAX_CODE_REQUESTS = 3;
-const SMS_DELIVERY_TIMEOUT_MS = 10_000;
 
 function hashToken(token) {
   return createHash('sha256').update(token).digest('hex');
@@ -24,39 +23,6 @@ function hashVerificationCode(challengeId, code) {
 
 function validEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
-function validPhone(phone) {
-  return /^\+[1-9]\d{7,14}$/.test(phone);
-}
-
-async function sendVerificationSms(phone, code, documentLabel) {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-  const fromNumber = process.env.TWILIO_FROM_NUMBER;
-  if (!accountSid || !authToken || !fromNumber) {
-    throw new Error('Twilio SMS delivery is not configured.');
-  }
-
-  const credentials = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
-  const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Messages.json`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Basic ${credentials}`,
-      'Content-Type': 'application/x-www-form-urlencoded'
-    },
-    signal: AbortSignal.timeout(SMS_DELIVERY_TIMEOUT_MS),
-    body: new URLSearchParams({
-      To: phone,
-      From: fromNumber,
-      Body: `Your verification code for ${documentLabel} is ${code}. It expires in 10 minutes.`
-    })
-  });
-  if (!response.ok) {
-    throw Object.assign(new Error('Twilio rejected the verification SMS.'), {
-      statusCode: response.status
-    });
-  }
 }
 
 function logDeliveryFailure(channel, error) {
@@ -105,11 +71,11 @@ router.post('/request', async (req, res, next) => {
     const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const phone = typeof req.body?.phone === 'string' ? req.body.phone.trim() : '';
-    const channel = req.body?.channel === 'sms' ? 'sms' : req.body?.channel === 'email' ? 'email' : '';
+    const channel = req.body?.channel === 'email' ? 'email' : '';
     const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
     const documentId = typeof req.body?.documentId === 'string' ? req.body.documentId : '';
     const verifiedEmail = channel === 'email' ? email : '';
-    const verifiedPhone = channel === 'sms' ? phone : null;
+    const verifiedPhone = phone;
     const storedDocument = database.prepare(`
       SELECT document_id, title, filename, stored_filename
       FROM portfolio_documents WHERE document_id = ?
@@ -124,20 +90,14 @@ router.post('/request', async (req, res, next) => {
     if (name.length < 2 || name.length > 100) {
       return res.status(400).json({ success: false, error: 'Enter your name (2 to 100 characters).' });
     }
-    if (!channel) {
-      return res.status(400).json({ success: false, error: 'Choose whether to receive the code by email or SMS.' });
+    if (phone.length < 7 || phone.length > 30 || !/^[+\d][\d\s().-]{6,29}$/.test(phone)) {
+      return res.status(400).json({ success: false, error: 'Enter a valid phone number (7 to 30 characters).' });
     }
-    if ((channel === 'email' && phone) || (channel === 'sms' && email)) {
-      return res.status(400).json({ success: false, error: 'Use either email or phone for verification, not both.' });
+    if (!channel) {
+      return res.status(400).json({ success: false, error: 'Enter an email address to receive your verification code.' });
     }
     if (channel === 'email' && (email.length > 254 || !validEmail(email))) {
       return res.status(400).json({ success: false, error: 'Enter a valid email address.' });
-    }
-    if (phone && !/^[+\d().\-\s]{7,30}$/.test(phone)) {
-      return res.status(400).json({ success: false, error: 'Enter a valid phone number.' });
-    }
-    if (channel === 'sms' && !validPhone(phone)) {
-      return res.status(400).json({ success: false, error: 'Enter a phone number in international format, such as +250788123456.' });
     }
     if (reason.length < 10 || reason.length > 1000) {
       return res.status(400).json({ success: false, error: 'Describe why you need the document (10 to 1,000 characters).' });
@@ -151,21 +111,16 @@ router.post('/request', async (req, res, next) => {
 
     await access(resolveWritablePath('private-documents',  document.storedName));
     const transporter = channel === 'email' && process.env.NODE_ENV !== 'test' ? getTransporter() : null;
-    const smsConfigured = Boolean(
-      process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM_NUMBER
-    );
-    if (process.env.NODE_ENV !== 'test' && ((channel === 'email' && !transporter) || (channel === 'sms' && !smsConfigured))) {
+    if (process.env.NODE_ENV !== 'test' && !transporter) {
       return res.status(503).json({
         success: false,
-        error: channel === 'sms'
-          ? 'No SMS code was sent because SMS delivery is not enabled. To use email instead, clear the phone field, enter your email address, and select Send code to this email.'
-          : 'No email code was sent because email delivery is not available. Please try again later or use SMS if it is available.'
+        error: 'Email code delivery is not configured. Set EMAIL_USER and EMAIL_PASSWORD on the backend, then restart it.'
       });
     }
 
     const now = Date.now();
     const ipAddress = req.ip || 'unknown';
-    const recipient = channel === 'email' ? email : phone;
+    const recipient = email;
     const emailHash = hashToken(`${channel}:${recipient}`);
     const challengeId = randomUUID();
     const code = process.env.NODE_ENV === 'test' && process.env.DOWNLOAD_VERIFICATION_TEST_CODE
@@ -235,31 +190,23 @@ router.post('/request', async (req, res, next) => {
 
     if (process.env.NODE_ENV !== 'test') {
       try {
-        if (channel === 'sms') {
-          await sendVerificationSms(phone, code, document.label);
-        } else {
-          await transporter.sendMail({
-            from: getMailFromAddress(),
-            to: email,
-            subject: `Your verification code for ${document.label}`,
-            text: `Your document request verification code is ${code}. It expires in 10 minutes. If you did not request this code, you can ignore this message.`
-          });
-        }
+        await transporter.sendMail({
+          from: getMailFromAddress(),
+          to: email,
+          subject: `Your verification code for ${document.label}`,
+          text: `Your document request verification code is ${code}. It expires in 10 minutes. If you did not request this code, you can ignore this message.`
+        });
       } catch (error) {
         releaseReservation();
         logDeliveryFailure(channel, error);
         return res.status(502).json({
           success: false,
-          error: channel === 'sms'
-            ? 'No SMS code was sent. Check that the phone number is correct and try again later.'
-            : 'No email code was sent. Check the email address and try again later.'
+          error: 'No email code was sent. Check the email address and try again later.'
         });
       }
     }
 
-    const recipientPreview = channel === 'email'
-      ? email.replace(/^(.).+(@.*)$/, '$1***$2')
-      : `${phone.slice(0, 4)}***${phone.slice(-3)}`;
+    const recipientPreview = email.replace(/^(.).+(@.*)$/, '$1***$2');
     const response = { success: true, challengeId, channel, recipientPreview, expiresInSeconds: VERIFICATION_DURATION_MS / 1000 };
     if (process.env.NODE_ENV === 'test' && process.env.DOWNLOAD_VERIFICATION_TEST_CODE) {
       response.testVerificationCode = code;
@@ -301,7 +248,7 @@ router.post('/verify', async (req, res, next) => {
         success: false,
         error: attempts >= MAX_CODE_ATTEMPTS
           ? 'Too many incorrect codes. Request a new verification code.'
-          : 'That code is incorrect. Check your email or phone and try again.'
+          : 'That code is incorrect. Check your email and try again.'
       });
     }
 
@@ -370,6 +317,7 @@ router.post('/verify', async (req, res, next) => {
     return res.status(201).json({
       success: true,
       downloadToken: token,
+      downloadRequestId: downloadId,
       filename: document.filename,
       notificationSent
     });
@@ -450,12 +398,15 @@ router.post('/file', (req, res, next) => {
     const filePath = resolveWritablePath('private-documents',  accessToken.document.storedName);
     res.download(filePath, accessToken.document.filename, (error) => {
       if (error) {
+        database.prepare("UPDATE download_enquiries SET download_status = 'failed' WHERE id = ? AND downloaded_at IS NULL")
+          .run(accessToken.download_id);
+        database.prepare('DELETE FROM download_access_tokens WHERE token_hash = ?').run(accessToken.token_hash);
         if (!res.headersSent) return next(error);
         console.error(`Could not deliver download request ${accessToken.download_id}:`, error);
         return;
       }
       const downloadedAt = new Date().toISOString();
-      database.prepare('UPDATE download_enquiries SET downloaded_at = ? WHERE id = ?')
+      database.prepare("UPDATE download_enquiries SET downloaded_at = ?, download_status = 'downloaded' WHERE id = ?")
         .run(downloadedAt, accessToken.download_id);
       database.prepare('DELETE FROM download_access_tokens WHERE token_hash = ?').run(accessToken.token_hash);
     });
@@ -464,12 +415,32 @@ router.post('/file', (req, res, next) => {
   }
 });
 
+router.post('/file-failed', (req, res, next) => {
+  try {
+    const token = typeof req.body?.token === 'string' ? req.body.token : '';
+    const accessToken = getAuthorizedDownload(token);
+    if (!accessToken) return res.status(410).json({ success: false, error: 'The download attempt has expired.' });
+    database.prepare("UPDATE download_enquiries SET download_status = 'failed' WHERE id = ? AND downloaded_at IS NULL")
+      .run(accessToken.download_id);
+    database.prepare('DELETE FROM download_access_tokens WHERE token_hash = ?').run(accessToken.token_hash);
+    return res.json({ success: true });
+  } catch (error) { return next(error); }
+});
+
 router.get('/', requireAdmin, (req, res, next) => {
   try {
     const downloads = database.prepare(`
-      SELECT id, name, email, phone, reason, document_id AS documentId,
-        document_label AS document, requested_at AS requestedAt, downloaded_at AS downloadedAt
+      SELECT download_enquiries.id, name, email, phone, reason,
+        download_enquiries.document_id AS documentId,
+        download_enquiries.document_label AS document,
+        COALESCE(portfolio_documents.document_type,
+          CASE WHEN download_enquiries.document_id LIKE 'cv-%' THEN 'cv'
+               WHEN download_enquiries.document_id LIKE 'certificate-%' THEN 'certificate'
+               ELSE 'document' END) AS documentType,
+        requested_at AS requestedAt, downloaded_at AS downloadedAt,
+        download_status AS downloadStatus
       FROM download_enquiries
+      LEFT JOIN portfolio_documents ON portfolio_documents.document_id = download_enquiries.document_id
       ORDER BY requested_at DESC, id DESC
       LIMIT 500
     `).all();

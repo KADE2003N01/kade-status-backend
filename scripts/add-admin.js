@@ -13,6 +13,9 @@ try {
     throw new Error('Enter a display name from 1 to 120 characters.');
   }
 
+  const phone = (await promptText('Admin phone number (optional): ')).trim();
+  if (phone.length > 40) throw new Error('Enter a phone number no longer than 40 characters.');
+
   const password = await promptPasswordPair();
   if (password === null) {
     console.log('Admin creation cancelled.');
@@ -27,9 +30,9 @@ try {
       const salt = randomBytes(16).toString('hex');
       const passwordHash = scryptSync(password, salt, 64).toString('hex');
       database.prepare(`
-        INSERT INTO admin_users (email, display_name, password_hash)
-        VALUES (?, ?, ?)
-      `).run(email, displayName, `${salt}:${passwordHash}`);
+        INSERT INTO admin_users (email, display_name, password_hash, phone)
+        VALUES (?, ?, ?, ?)
+      `).run(email, displayName, `${salt}:${passwordHash}`, phone || null);
       console.log(`Admin account created for ${email}.`);
     } finally {
       database.close();

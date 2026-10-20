@@ -1,8 +1,11 @@
 import nodemailer from 'nodemailer';
 
-export const getTransporter = () => {
-  const user = process.env.EMAIL_USER;
-  const pass = process.env.EMAIL_PASSWORD;
+export const getTransporter = (purpose = 'otp') => {
+  const isContact = purpose === 'contact';
+  const user = (isContact ? process.env.CONTACT_EMAIL_USER : process.env.EMAIL_USER)
+    || (isContact ? process.env.EMAIL_USER : '');
+  const pass = (isContact ? process.env.CONTACT_EMAIL_PASSWORD : process.env.EMAIL_PASSWORD)
+    || (isContact ? process.env.EMAIL_PASSWORD : '');
   const timeoutOptions = {
     connectionTimeout: 10_000,
     greetingTimeout: 10_000,
@@ -11,13 +14,14 @@ export const getTransporter = () => {
 
   if (!user || !pass) return null;
 
-  const host = process.env.SMTP_HOST;
+  const host = (isContact ? process.env.CONTACT_SMTP_HOST : process.env.SMTP_HOST) || process.env.SMTP_HOST;
   if (host) {
-    const port = Number(process.env.SMTP_PORT || 587);
+    const port = Number((isContact ? process.env.CONTACT_SMTP_PORT : process.env.SMTP_PORT) || process.env.SMTP_PORT || 587);
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       throw new Error('SMTP_PORT must be a valid TCP port.');
     }
-    const secure = process.env.SMTP_SECURE === 'true' || (!process.env.SMTP_SECURE && port === 465);
+    const secureSetting = (isContact ? process.env.CONTACT_SMTP_SECURE : process.env.SMTP_SECURE) || process.env.SMTP_SECURE;
+    const secure = secureSetting === 'true' || (!secureSetting && port === 465);
     return nodemailer.createTransport({
       host,
       port,
@@ -34,4 +38,6 @@ export const getTransporter = () => {
   });
 };
 
-export const getMailFromAddress = () => process.env.SMTP_FROM || process.env.EMAIL_USER || '';
+export const getMailFromAddress = (purpose = 'otp') => purpose === 'contact'
+  ? process.env.CONTACT_SMTP_FROM || process.env.CONTACT_EMAIL_USER || process.env.EMAIL_USER || ''
+  : process.env.SMTP_FROM || process.env.EMAIL_USER || '';

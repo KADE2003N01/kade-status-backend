@@ -14,5 +14,13 @@ export function openConfiguredDatabase({ readonly = true } = {}) {
   if (!existsSync(databasePath)) {
     throw new Error('The configured SQLite database was not found. Check DATABASE_PATH in .env.');
   }
-  return new Database(databasePath, { readonly });
+  const database = new Database(databasePath, { readonly });
+  if (!readonly) {
+    const adminTable = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'admin_users'").get();
+    if (adminTable) {
+      const columns = new Set(database.prepare('PRAGMA table_info(admin_users)').all().map((column) => column.name));
+      if (!columns.has('phone')) database.exec('ALTER TABLE admin_users ADD COLUMN phone TEXT');
+    }
+  }
+  return database;
 }

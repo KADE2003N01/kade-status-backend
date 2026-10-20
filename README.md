@@ -55,9 +55,6 @@ EMAIL_PASSWORD=your-16-char-password
 # SMTP_PORT=587
 # SMTP_SECURE=false
 # SMTP_FROM=verified-sender@example.com
-TWILIO_ACCOUNT_SID=AC...
-TWILIO_AUTH_TOKEN=your-twilio-auth-token
-TWILIO_FROM_NUMBER=+15017122661
 ADMIN_EMAIL=kadecomputerscience@gmail.com
 ADMIN_PASSWORD=replace-with-your-own-password
 ADMIN_DISPLAY_NAME=David KWIZERA
@@ -111,8 +108,8 @@ Run the backend with `npm start`, then run the React frontend from `kade-status-
 - `GET /api/homepage` returns the public landing-page content.
 - `PUT /api/homepage` lets an authenticated admin publish landing-page text, images, links, cards, and section visibility to the shared database.
 - `POST /api/homepage/reset` restores the default landing-page content for authenticated admins.
-- `POST /api/downloads/request` validates a visitor's name, selected email/SMS recipient, purpose, and consent, then sends a one-time code via the selected channel. It does not create a request or issue download authorization until the recipient is verified.
-- `POST /api/downloads/verify` accepts `{ "challengeId": "...", "code": "123456" }`; codes expire after 10 minutes and allow five attempts. Code requests are limited to three per recipient/IP pair per 15-minute window. Configure email or Twilio delivery as described below; missing configuration or delivery errors do not grant access.
+- `POST /api/downloads/request` validates a visitor's name, email, purpose, and consent, then sends a one-time code by email. It does not create a request or issue download authorization until the email is verified.
+- `POST /api/downloads/verify` accepts `{ "challengeId": "...", "code": "123456" }`; codes expire after 10 minutes and allow five attempts. Code requests are limited to three per email/IP pair per 15-minute window. Missing email configuration or delivery errors do not grant access.
 - `POST /api/downloads/preview` displays a document inline using that authorization.
 - `GET /api/downloads/preview/:documentId` lets visitors view a published PDF inline without creating a download request; downloading remains gated by the verified contact form.
 - `POST /api/downloads/file` consumes the short-lived authorization and delivers the requested private file.
@@ -126,9 +123,9 @@ Run the backend with `npm start`, then run the React frontend from `kade-status-
 - Invalid sign-ins are rate limited to five attempts per IP address per 15-minute window.
 - Sessions expire after eight hours. Keep `.env` and the SQLite database private, use HTTPS in production, and keep a persistent disk mounted for SQLite.
 
-The visitor download form requires `documentId`, `name`, `reason` (10–1,000 characters), exactly one contact method (`email` or `phone`), `channel` (`email` or `sms`), and `consent: true`. Visitors enter their own email or phone number; the matching send-code button is shown, and the code is delivered to that selected contact. The server rejects requests that include both contact methods, and only the verified email or phone is retained as the visitor's follow-up contact. A successful `/api/downloads/request` returns only a `challengeId` and expiry; the actual one-time code is never sent back to the browser. The visitor must enter the real six-digit code received by email or SMS and pass `/api/downloads/verify` before receiving the short-lived download token. Gmail uses `EMAIL_USER` and a Gmail app password in `EMAIL_PASSWORD` (with 2-Step Verification enabled). To use a different SMTP provider, also set `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE` (`true` or `false`), and optionally `SMTP_FROM`. SMS verification requires Twilio `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_NUMBER`; use an active Twilio sender authorized for your account and destination region. Add these values to the backend's private `.env` or hosting-provider secret settings, restart the backend after changing them, and never run the test environment in production. The `.env.example` values are placeholders and cannot deliver messages.
+The visitor download form requires `documentId`, `name`, `email`, `reason` (10–1,000 characters), and `consent: true`. A successful `/api/downloads/request` returns a `challengeId` and expiry; the actual one-time code is never sent back to the browser. Visitors can request another code from the verification step; requests remain limited to three per email/IP pair per 15-minute window. The visitor must enter the six-digit code received by email and pass `/api/downloads/verify` before receiving the short-lived download token. Gmail uses `EMAIL_USER` and a Gmail app password in `EMAIL_PASSWORD` (with 2-Step Verification enabled). To use a different SMTP provider, also set `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE` (`true` or `false`), and optionally `SMTP_FROM`. Add these values to the backend's private `.env` or hosting-provider secret settings, restart the backend after changing them, and never run the test environment in production. The `.env.example` values are placeholders and cannot deliver messages.
 
-The request endpoint reports success only after the email or SMS provider accepts the message. If delivery fails, it removes the temporary challenge and releases that request's rate-limit reservation so the visitor can retry; delivery logs contain provider error codes only, not message content, OTPs, or recipient details.
+The request endpoint reports success only after the email provider accepts the message. If delivery fails, it removes the temporary challenge and releases that request's rate-limit reservation so the visitor can retry; delivery logs contain provider error codes only, not message content, OTPs, or recipient details.
 
 If Gmail returns `EAUTH` with response code `535`, Gmail has rejected the configured SMTP credentials. `EMAIL_PASSWORD` must be a Google App Password generated for the same account in `EMAIL_USER` (not the account's regular password); App Passwords require Google 2-Step Verification. Replace the value privately in `.env`, ensure it has no surrounding quotes or accidental whitespace, and restart the backend. The startup message only confirms that a value is present, not that Gmail accepts it. Never paste the password into terminal output, source code, or chat.
 
