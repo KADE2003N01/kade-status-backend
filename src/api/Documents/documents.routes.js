@@ -4,9 +4,9 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import database from '../../config/database.js';
+import database from '../../database/database.js';
 import { resolveWritableDirectory, resolveWritablePath } from '../../config/storage.js';
-import { requireAdmin } from '../Auth/auth.routes.js';
+import { requireAdmin } from '../../verification/admin-auth.js';
 
 const router = express.Router();
 const privateDocumentsDirectory = resolveWritableDirectory('private-documents');

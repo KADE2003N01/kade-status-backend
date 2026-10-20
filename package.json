@@ -6,9 +6,11 @@
   "scripts": {
     "start": "node server.js",
     "admin:add": "node scripts/add-admin.js",
+    "setup:admin": "node scripts/add-admin.js",
     "admin:list": "node scripts/list-admins.js",
     "admin:reset-password": "node scripts/reset-admin-password.js",
     "db:inspect": "node scripts/inspect-database.js",
+    "setup:check": "node scripts/check-setup.js",
     "test": "node --test"
   },
   "engines": {

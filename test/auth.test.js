@@ -3,7 +3,7 @@ import { after, test } from 'node:test';
 import { existsSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { defaultHomepageContent, validateHomepageContent } from '../config/homepage-content.js';
+import { defaultHomepageContent, validateHomepageContent } from '../src/config/homepage-content.js';
 
 const databasePath = path.join(tmpdir(), `kade-auth-test-${process.pid}.sqlite`);
 const storageDirectory = path.join(tmpdir(), `kade-auth-storage-${process.pid}`);
@@ -21,7 +21,7 @@ process.env.PUBLIC_API_URL = 'http://localhost:5000';
 
 const [{ default: app }, { default: database }] = await Promise.all([
   import('../app.js'),
-  import('../config/database.js')
+  import('../src/database/database.js')
 ]);
 const server = app.listen(0);
 await new Promise((resolve) => server.once('listening', resolve));

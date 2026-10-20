@@ -1,10 +1,10 @@
 ﻿import { createHash, randomBytes, randomInt, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { access } from 'node:fs/promises';
 import express from 'express';
-import database from '../../config/database.js';
+import database from '../../database/database.js';
 import { resolveWritablePath } from '../../config/storage.js';
 import { getMailFromAddress, getTransporter } from '../../config/mailer.js';
-import { requireAdmin } from '../Auth/auth.routes.js';
+import { requireAdmin } from '../../verification/admin-auth.js';
 
 const router = express.Router();
 const TOKEN_DURATION_MS = 5 * 60 * 1000;

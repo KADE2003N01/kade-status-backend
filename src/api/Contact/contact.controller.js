@@ -1,4 +1,5 @@
-import { getMailFromAddress, getTransporter } from '../../config/mailer.js';
+import { getTransporter } from '../../config/mailer.js';
+import { sendContactEmails } from '../../services/contact.service.js';
 
 export const getStatus = async (req, res) => {
   const transporter = getTransporter();
@@ -40,22 +41,7 @@ export const sendContactEmail = async (req, res) => {
       return res.status(503).json({ success: false, error: 'Email service not configured' });
     }
 
-    // Notify Owner
-    await transporter.sendMail({
-      from: getMailFromAddress(),
-      to: process.env.EMAIL_USER,
-      replyTo: email,
-      subject: `Portfolio: Message from ${name}`,
-      text: `From: ${name} (${email})\n\nMessage:\n${message}`,
-    });
-
-    // Auto-reply to Visitor
-    await transporter.sendMail({
-      from: getMailFromAddress(),
-      to: email,
-      subject: 'Message Received - Kade Portfolio',
-      text: `Hi ${name},\n\nThanks for reaching out! I've received your message and will respond shortly.`,
-    });
+    await sendContactEmails({ transporter, name, email, message });
 
     return res.status(200).json({ success: true, message: 'Message sent!' });
   } catch (error) {

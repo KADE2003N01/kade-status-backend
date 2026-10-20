@@ -2,10 +2,10 @@
 import { unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import express from 'express';
-import database from '../../config/database.js';
+import database from '../../database/database.js';
 import { resolveWritableDirectory, resolveWritablePath } from '../../config/storage.js';
 import { defaultHomepageContent, validateHomepageContent } from '../../config/homepage-content.js';
-import { requireAdmin } from '../Auth/auth.routes.js';
+import { requireAdmin } from '../../verification/admin-auth.js';
 
 const router = express.Router();
 const CONTENT_KEY = 'homepage';

@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const backendDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const backendDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const storageRoot = process.env.STORAGE_DIR
   ? path.resolve(process.env.STORAGE_DIR)
   : backendDirectory;

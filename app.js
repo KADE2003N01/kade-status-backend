@@ -1,11 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
-import contactRoutes from './APIs/Contact/contact.routes.js'; // Correct path to Contact API routes
-import authRoutes from './APIs/Auth/auth.routes.js';
-import downloadRoutes from './APIs/Downloads/downloads.routes.js';
-import documentRoutes from './APIs/Documents/documents.routes.js';
-import homepageRoutes from './APIs/Homepage/homepage.routes.js';
+import apiRoutes from './src/routes/index.js';
 
 const app = express();
 
@@ -58,14 +54,7 @@ app.use((req, res, next) => {
 // API Registration
 app.get('/', (req, res) => res.json({ success: true, message: 'Kade API v1' }));
 app.get('/api/health', (req, res) => res.json({ status: 'OK' }));
-
-// [APIs Registration] - Register your API modules here
-app.use('/api/contact', contactRoutes);
-app.use('/api/auth', authRoutes);
-app.use('/api/downloads', downloadRoutes);
-app.use('/api/documents', documentRoutes);
-app.use('/api/homepage', homepageRoutes);
-// app.use('/api/blog', blogRoutes); // How you would add more APIs
+app.use('/api', apiRoutes);
 
 // 404 Handler
 app.use((req, res) => {

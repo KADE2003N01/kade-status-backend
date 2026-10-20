@@ -14,6 +14,14 @@ A simple Express.js backend for handling contact form submissions via email usin
 
 ## 🚀 Quick Setup (5 minutes)
 
+### Local administrator setup
+
+From the `kade-status-backend` folder, start the API once so it creates the SQLite tables. In a second backend terminal, run `npm run admin:add` and follow the prompts to create an administrator; the password is hidden while typing and must be at least 8 characters. Choose something memorable that you do not reuse elsewhere. Check the result with `npm run admin:list`. Keep `npm start` running while using the local frontend.
+
+On PowerShell, use `npm.cmd` if script execution blocks `npm` (for example, `npm.cmd run admin:add`). Run `npm run setup:check` whenever setup is unclear. It reports which backend folder and database file are in use, whether an admin exists, and what to do next without printing secrets.
+
+The local frontend uses only `http://localhost:5000/api`. It will not silently send local admin sign-in attempts to the deployed API when the local backend is stopped. Set `VITE_PORTFOLIO_API_BASE_URL` only when you intentionally want a different API.
+
 ### 1. Prerequisites
 - Node.js 20+ installed
 - Gmail account with 2-Step Verification enabled
@@ -65,7 +73,7 @@ For Render production, attach a persistent disk to the backend web service, moun
 
 The first server start creates the administrator account in SQLite from the `ADMIN_*` values. The password is stored as a salted scrypt hash; the administrator display name is read from the database after sign-in. Once the account exists, sign-in uses the database record and does not require the `ADMIN_*` values to remain configured. Changing bootstrap environment values does not overwrite an existing administrator record. The database file is excluded from Git; production hosting must provide persistent storage for `DATABASE_PATH`.
 
-`ADMIN_PASSWORD` must contain at least 5 characters when bootstrapping an administrator. This low minimum is a security tradeoff; use a longer, unique password wherever possible.
+For compatibility, `ADMIN_PASSWORD` bootstrap accepts at least 5 characters. The interactive `admin:add` and `admin:reset-password` commands require 8 characters. Use a memorable, unique password and consider a longer passphrase if that is easier to remember.
 
 The downloadable CV and EBC PDF files live in `private-documents/`, outside the public frontend assets. CV and certificate PDFs uploaded through the admin dashboard are stored in that same private directory, while their public display details are stored in SQLite. Profile images uploaded from the landing-page editor are checked for supported image signatures and saved under the backend's `profile-images/` directory. Keep these backend assets deployed and back them up with the database.
 
@@ -73,14 +81,14 @@ For an existing installation, update the administrator's email in the SQLite `ad
 
 ### Reset an administrator password
 
-From the backend directory, run `npm run admin:reset-password`. Enter the administrator's email and a new password of at least 12 characters when prompted. Password input is hidden, the database stores only a salted hash, and existing sessions for that administrator are revoked. The command uses `DATABASE_PATH` from `.env` or the default `data/portfolio.sqlite` database.
+From the backend directory, run `npm run admin:reset-password`. Enter the administrator's email and a new password of at least 8 characters when prompted. Password input is hidden, the database stores only a salted hash, and existing sessions for that administrator are revoked. The command uses `DATABASE_PATH` from `.env` or the default `data/portfolio.sqlite` database.
 
 ### Quick database commands
 
 Run these from the backend directory:
 
 - `npm run admin:list` lists administrator email addresses, display names, and creation dates. It never displays password hashes.
-- `npm run admin:add` adds an administrator directly to SQLite. Enter their email and display name, then a new password of at least 12 characters when prompted. Password input is hidden.
+- `npm run admin:add` adds an administrator directly to SQLite. Enter their email and display name, then a new password of at least 8 characters when prompted. Password input is hidden.
 - `npm run db:inspect` lists database tables and their row counts without printing their contents.
 - `npm run admin:reset-password` resets an existing administrator password and revokes that administrator's sessions.
 
@@ -93,7 +101,7 @@ The deployed frontend origin (`https://david-portifolio.onrender.com`) and the s
 npm start
 ```
 
-Run the backend with `npm start`, then run the React frontend from `kade-status-frontend` with `npm install` and `npm run dev` in a second terminal. Open the URL printed by Vite and visit `src/admin-login.html`. Vite proxies local `/api` requests to the backend at `http://127.0.0.1:5000`. For Render production, the frontend's `render.yaml` rewrites `/api/*` to the Render backend while keeping the browser on the frontend origin; this lets mobile browsers store the admin session cookie as a first-party cookie. The local frontend tries `http://localhost:5000/api` first and falls back to the deployed Render API when the local backend is unavailable. Set `VITE_PORTFOLIO_API_BASE_URL` only when intentionally overriding these API URLs.
+Run the backend with `npm start`, then run the React frontend from `kade-status-frontend` with `npm install` and `npm run dev` in a second terminal. Open the URL printed by Vite and visit `admin-login.html`. Vite proxies local `/api` requests to the backend at `http://127.0.0.1:5000`. For Render production, the frontend's `render.yaml` rewrites `/api/*` to the Render backend while keeping the browser on the frontend origin; this lets mobile browsers store the admin session cookie as a first-party cookie. On localhost, the frontend uses only the local backend so a development sign-in cannot silently go to production. Set `VITE_PORTFOLIO_API_BASE_URL` only when intentionally overriding these API URLs.
 
 ## Admin Authentication
 

@@ -1,17 +1,13 @@
-import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
+import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import express from 'express';
-import database from '../../config/database.js';
+import database from '../../database/database.js';
 import { defaultHomepageContent } from '../../config/homepage-content.js';
+import { clearSessionCookie, hashSessionToken, requireAdmin, SESSION_COOKIE } from '../../verification/admin-auth.js';
 
 const router = express.Router();
 const scryptAsync = promisify(scrypt);
-const SESSION_COOKIE = 'kade_admin_session';
 const SESSION_DURATION_MS = 8 * 60 * 60 * 1000;
-
-function hashToken(token) {
-  return createHash('sha256').update(token).digest('hex');
-}
 
 function getCookieOptions() {
   const configuredSameSite = (process.env.COOKIE_SAME_SITE || '').toLowerCase();
@@ -31,47 +27,14 @@ function getCookieOptions() {
   };
 }
 
-function clearSessionCookie(res) {
-  const { maxAge, ...options } = getCookieOptions();
-  res.clearCookie(SESSION_COOKIE, options);
-}
-
-function getSessionUser(req) {
-  // Primary: the httpOnly session cookie. Fallback: an Authorization bearer
-  // token, so sign-in still works on mobile browsers that block third-party
-  // cookies (the admin frontend and API are served from different domains).
-  let token = req.cookies?.[SESSION_COOKIE];
-  if (!token) {
-    const header = req.headers?.authorization || '';
-    if (header.startsWith('Bearer ')) token = header.slice(7).trim() || null;
-  }
-  if (!token) return null;
-
-  const now = Date.now();
-  const session = database.prepare(`
-    SELECT admin_users.id, admin_users.email, admin_users.display_name
-    FROM admin_sessions
-    JOIN admin_users ON admin_users.id = admin_sessions.user_id
-    WHERE admin_sessions.token_hash = ? AND admin_sessions.expires_at > ?
-  `).get(hashToken(token), now);
-
-  return session || null;
-}
-
-export function requireAdmin(req, res, next) {
-  const user = getSessionUser(req);
-  if (!user) {
-    clearSessionCookie(res);
-    return res.status(401).json({ success: false, error: 'Authentication required.' });
-  }
-  req.adminUser = user;
-  return next();
-}
-
 router.post('/login', async (req, res, next) => {
   try {
     if (!database.prepare('SELECT id FROM admin_users LIMIT 1').get()) {
-      return res.status(503).json({ success: false, error: 'Admin login is not configured on the server.' });
+      return res.status(503).json({
+        success: false,
+        code: 'ADMIN_SETUP_REQUIRED',
+        error: 'No admin account exists in this database. From the backend folder, run `npm run admin:add`, then sign in with that account.'
+      });
     }
 
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
@@ -105,7 +68,7 @@ router.post('/login', async (req, res, next) => {
     database.prepare(`
       INSERT INTO admin_sessions (token_hash, user_id, expires_at, created_at)
       VALUES (?, ?, ?, ?)
-    `).run(hashToken(token), user.id, expiresAt, Date.now());
+    `).run(hashSessionToken(token), user.id, expiresAt, Date.now());
 
     res.cookie(SESSION_COOKIE, token, getCookieOptions());
 
@@ -150,7 +113,7 @@ router.post('/logout', (req, res) => {
     if (header.startsWith('Bearer ')) token = header.slice(7).trim() || null;
   }
   if (token) {
-    database.prepare('DELETE FROM admin_sessions WHERE token_hash = ?').run(hashToken(token));
+    database.prepare('DELETE FROM admin_sessions WHERE token_hash = ?').run(hashSessionToken(token));
   }
   clearSessionCookie(res);
   return res.json({ success: true });

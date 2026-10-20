@@ -1,6 +1,8 @@
 import { stdin, stdout } from 'node:process';
 import { createInterface } from 'node:readline/promises';
 
+const MIN_ADMIN_PASSWORD_LENGTH = 8;
+
 export async function promptText(prompt) {
   const prompts = createInterface({ input: stdin, output: stdout });
   try {
@@ -47,9 +49,11 @@ export function readHidden(prompt) {
 }
 
 export async function promptPasswordPair() {
-  const password = await readHidden('Password (minimum 12 characters; input hidden): ');
+  const password = await readHidden(`Password (minimum ${MIN_ADMIN_PASSWORD_LENGTH} characters; input hidden): `);
   if (password === null) return null;
-  if (password.length < 12) throw new Error('Choose a password with at least 12 characters.');
+  if (password.length < MIN_ADMIN_PASSWORD_LENGTH) {
+    throw new Error(`Choose a password with at least ${MIN_ADMIN_PASSWORD_LENGTH} characters.`);
+  }
 
   const confirmation = await readHidden('Confirm password (input hidden): ');
   if (confirmation === null) return null;

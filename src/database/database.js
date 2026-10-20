@@ -1,12 +1,10 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { randomBytes, scryptSync } from 'node:crypto';
+import { backendDirectory, getDatabasePath } from '../config/paths.js';
 
-const backendDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-let databasePath = process.env.DATABASE_PATH
-  || path.join(backendDirectory, 'data', 'portfolio.sqlite');
+const databasePath = getDatabasePath();
 mkdirSync(path.dirname(databasePath), { recursive: true });
 
 const database = new Database(databasePath);
@@ -153,7 +151,8 @@ if (bootstrapAdmins.length) {
     }
   }
 } else {
-  console.warn('Admin login is disabled until ADMIN_EMAIL, ADMIN_PASSWORD, and ADMIN_DISPLAY_NAME are configured.');
+  console.warn(`Admin login is disabled because this database has no admin account: ${databasePath}`);
+  console.warn(`Create one with "npm run admin:add" from ${backendDirectory}.`);
 }
 
 export default database;

@@ -1,4 +1,4 @@
-import database from './config/database.js';
+import database from './src/database/database.js';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
