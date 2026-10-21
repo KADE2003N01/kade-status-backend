@@ -5,7 +5,7 @@ import database from '../../database/database.js';
 import { resolveWritablePath } from '../../config/storage.js';
 import { getMailFromAddress, getTransporter } from '../../config/mailer.js';
 import { requireAdmin } from '../../verification/admin-auth.js';
-import { parseEastAfricanPhone } from '../../utils/east-africa-phone.js';
+import { parseInternationalPhone } from '../../utils/international-phone.js';
 
 const router = express.Router();
 const TOKEN_DURATION_MS = 5 * 60 * 1000;
@@ -95,7 +95,7 @@ router.post('/request', async (req, res, next) => {
     const documentId = typeof req.body?.documentId === 'string' ? req.body.documentId : '';
     const purpose = req.body?.purpose === 'preview' ? 'preview' : 'download';
     const verifiedEmail = channel === 'email' ? email : '';
-    const parsedPhone = parseEastAfricanPhone(phone);
+    const parsedPhone = parseInternationalPhone(phone);
     const verifiedPhone = parsedPhone?.number || '';
     const storedDocument = database.prepare(`
       SELECT document_id, title, filename, stored_filename
@@ -112,7 +112,7 @@ router.post('/request', async (req, res, next) => {
       return res.status(400).json({ success: false, error: 'Enter your name (2 to 100 characters).' });
     }
     if (purpose !== 'preview' && (phone.length > 30 || !parsedPhone)) {
-      return res.status(400).json({ success: false, error: 'Enter a valid East African phone number with its country calling code.' });
+      return res.status(400).json({ success: false, error: 'Enter a valid international phone number with its country calling code.' });
     }
     if (!channel) {
       return res.status(400).json({ success: false, error: 'Enter an email address to receive your verification code.' });

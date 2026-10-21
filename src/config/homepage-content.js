@@ -98,7 +98,8 @@ export const defaultHomepageContent = {
     contactLabel: 'Contact',
     contactHref: 'tel:+250788950833',
     adminName: 'David KWIZERA'
-  }
+  },
+  localizedText: { fr: {}, sw: {} }
 };
 
 const MAX_CONTENT_LENGTH = 80_000;
@@ -168,6 +169,42 @@ function mergeWithTemplate(value, template) {
   return merged;
 }
 
+function translatablePaths(value, prefix = '', result = new Set()) {
+  if (!value || typeof value !== 'object') return result;
+  for (const [key, item] of Object.entries(value)) {
+    if (key === 'localizedText' || key === 'adminNameCustom') continue;
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (typeof item === 'string') {
+      if (!/(?:href|url|phone|email|icon|image|video|filename)$/i.test(key)) result.add(path);
+    } else if (item && typeof item === 'object') {
+      translatablePaths(item, path, result);
+    }
+  }
+  return result;
+}
+
+function validateLocalizedText(value) {
+  const paths = translatablePaths(defaultHomepageContent);
+  const validated = { fr: {}, sw: {} };
+  if (value === undefined) return validated;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw Object.assign(new Error('content.localizedText must contain French and Kiswahili text maps.'), { status: 400 });
+  }
+  for (const language of ['fr', 'sw']) {
+    const translations = value[language] ?? {};
+    if (!translations || typeof translations !== 'object' || Array.isArray(translations)) {
+      throw Object.assign(new Error(`content.localizedText.${language} must be an object.`), { status: 400 });
+    }
+    for (const [path, text] of Object.entries(translations)) {
+      if (!paths.has(path) || typeof text !== 'string' || text.length > MAX_STRING_LENGTH) {
+        throw Object.assign(new Error(`content.localizedText.${language}.${path} is not a supported text field.`), { status: 400 });
+      }
+      validated[language][path] = text;
+    }
+  }
+  return validated;
+}
+
 export function validateHomepageContent(content) {
   if (!content || typeof content !== 'object' || Array.isArray(content)) {
     throw Object.assign(new Error('Homepage content must be an object.'), { status: 400 });
@@ -185,6 +222,7 @@ export function validateHomepageContent(content) {
   }
   return {
     ...mergeWithTemplate(content, defaultHomepageContent),
+    localizedText: validateLocalizedText(content.localizedText),
     ...(Object.hasOwn(content, 'adminName') ? { adminName: content.adminName } : {}),
     ...(Object.hasOwn(content, 'adminNameCustom') ? { adminNameCustom: content.adminNameCustom } : {})
   };

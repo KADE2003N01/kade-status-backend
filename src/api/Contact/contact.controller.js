@@ -1,7 +1,7 @@
 import { getTransporter } from '../../config/mailer.js';
 import database from '../../database/database.js';
 import { sendContactEmails } from '../../services/contact.service.js';
-import { parseEastAfricanPhone } from '../../utils/east-africa-phone.js';
+import { parseInternationalPhone } from '../../utils/international-phone.js';
 
 export const getStatus = async (req, res) => {
   let transporter;
@@ -41,9 +41,9 @@ export const sendContactEmail = async (req, res) => {
     if (email.length > 254 || !emailRegex.test(email)) {
       return res.status(400).json({ success: false, error: 'Enter a valid email address.' });
     }
-    const parsedPhone = parseEastAfricanPhone(phone);
+    const parsedPhone = parseInternationalPhone(phone);
     if (phone.length > 30 || !parsedPhone) {
-      return res.status(400).json({ success: false, error: 'Enter a valid East African phone number with its country calling code.' });
+      return res.status(400).json({ success: false, error: 'Enter a valid international phone number with its country calling code.' });
     }
     const normalizedPhone = parsedPhone.number;
     if (message.length < 10 || message.length > 3000) {

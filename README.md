@@ -172,8 +172,8 @@ The first action alone is only a browser-side draft. **Restore defaults** intent
 ### Shared language and phone controls
 
 - The frontend keeps the shared language selector and translations in `kade-status-frontend/src/components/LanguageSelector.jsx` and `src/context/LanguageContext.jsx`. English, French, and Kiswahili are available. Visitor and admin preferences are saved separately in browser local storage, so changing one does not change the other.
-- The shared phone field is in `kade-status-frontend/src/components/PhoneNumberField.jsx` and is used in the contact form, document request form, and admin homepage contact-phone setting. It offers East African Community calling codes (Burundi, DR Congo, Kenya, Rwanda, Somalia, South Sudan, Tanzania, and Uganda). The selected code and number are checked and normalized to E.164 format by the frontend and backend.
-- The East African country list applies to phone numbers entered in these fields. It does not limit website visitors by their country or IP address. A valid number format does not prove that the number is active or reachable.
+- The shared phone field is in `kade-status-frontend/src/components/PhoneNumberField.jsx` and is used in the contact form, document request form, and admin homepage contact-phone setting. It offers international country calling codes, displays country names in the selected language, and sends numbers in E.164 format.
+- The country selection applies only to phone-number input; it does not limit website visitors by country or IP address. The frontend and backend validate the international number before use. A valid number format does not prove that the number is active or reachable. Changing the published contact number also updates the footer call link and WhatsApp link.
 - The language selector translates the interface text that has translations in the language catalog. Admin-authored homepage copy, document titles, and other visitor-provided content remain as entered; they are not automatically translated.
 
 ## API reference
@@ -190,7 +190,7 @@ All API routes are mounted beneath `/api`. Authenticated routes require the admi
 | `POST /api/homepage/profile-image` | Admin | Upload JPG, PNG, or WebP profile image (maximum 5 MB); `visibility` is `admin`, `both`, or `public`. |
 | `GET /api/homepage/admin-profile-image` | Admin | Serve the admin-only image, or return no image when the admin visibility choice is public-only. |
 | `GET /api/homepage/profile-image/:filename` | Public | Retrieve an uploaded profile image. |
-| `POST /api/contact/` | Public | Submit name, email, East African phone number, and message; validates input, emails it, and saves it to SQLite after delivery. |
+| `POST /api/contact/` | Public | Submit name, email, international phone number, and message; validates input, normalizes the phone number, emails it, and saves it to SQLite after delivery. |
 | `GET /api/contact/status` | Public | Reports contact mail configuration and SMTP connection status. |
 | `POST /api/auth/login` | Public | Sign in and create an admin session. |
 | `GET /api/auth/me` | Admin | Return the current admin's email and display name. |

@@ -6,7 +6,7 @@ import database from '../../database/database.js';
 import { resolveWritableDirectory, resolveWritablePath } from '../../config/storage.js';
 import { defaultHomepageContent, validateHomepageContent } from '../../config/homepage-content.js';
 import { requireAdmin } from '../../verification/admin-auth.js';
-import { parseEastAfricanPhone } from '../../utils/east-africa-phone.js';
+import { parseInternationalPhone } from '../../utils/international-phone.js';
 
 const router = express.Router();
 const CONTENT_KEY = 'homepage';
@@ -150,8 +150,8 @@ router.get('/profile-image/:filename', (req, res, next) => {
 router.put('/', requireAdmin, (req, res, next) => {
   try {
     const content = validateHomepageContent(req.body?.content);
-    if (content.footer?.phone && !parseEastAfricanPhone(content.footer.phone)) {
-      return res.status(400).json({ success: false, error: 'Enter a valid East African phone number with its country calling code.' });
+    if (content.footer?.phone && !parseInternationalPhone(content.footer.phone)) {
+      return res.status(400).json({ success: false, error: 'Enter a valid international phone number with its country calling code.' });
     }
     const updatedAt = saveHomepageContent(content);
     return res.json({ success: true, content, updatedAt });
