@@ -33,6 +33,15 @@ database.exec(`
     updated_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS contact_messages (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    message TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS download_enquiries (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
@@ -82,6 +91,12 @@ database.exec(`
     expires_at INTEGER NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS document_preview_tokens (
+    token_hash TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS portfolio_documents (
     document_id TEXT PRIMARY KEY,
     document_type TEXT NOT NULL CHECK (document_type IN ('cv', 'document', 'certificate')),
@@ -111,6 +126,7 @@ const verificationColumns = new Set(
   database.prepare('PRAGMA table_info(download_email_verifications)').all().map((column) => column.name)
 );
 if (!verificationColumns.has('phone')) database.exec('ALTER TABLE download_email_verifications ADD COLUMN phone TEXT');
+if (!verificationColumns.has('purpose')) database.exec("ALTER TABLE download_email_verifications ADD COLUMN purpose TEXT NOT NULL DEFAULT 'download'");
 
 const adminColumns = new Set(database.prepare('PRAGMA table_info(admin_users)').all().map((column) => column.name));
 if (!adminColumns.has('phone')) database.exec('ALTER TABLE admin_users ADD COLUMN phone TEXT');

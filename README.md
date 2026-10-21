@@ -1,461 +1,282 @@
-# Kade Status Backend
+# Kade Portfolio Website Guide
 
-A simple Express.js backend for handling contact form submissions via email using Gmail's SMTP server.
+This guide describes the website as it is implemented in this repository: how to run it, where its data lives, which project commands are available, how the API behaves, and what to check when something fails.
 
-## 📋 Features
+## Contents
 
-- ✅ Contact form email submission
-- ✅ Sends confirmation email to visitor
-- ✅ Sends notification email to site owner
-- ✅ CORS support for frontend integration
-- ✅ Input validation & XSS protection
-- ✅ Health check endpoint
-- ✅ Error handling & logging
+- [How the website is organized](#how-the-website-is-organized)
+- [Requirements and local setup](#requirements-and-local-setup)
+- [Environment configuration](#environment-configuration)
+- [Database and uploaded files](#database-and-uploaded-files)
+- [Available project commands](#available-project-commands)
+- [Admin workflow and limitations](#admin-workflow-and-limitations)
+- [API reference](#api-reference)
+- [Build, checks, and deployment](#build-checks-and-deployment)
+- [Troubleshooting](#troubleshooting)
+- [Safe maintenance notes](#safe-maintenance-notes)
 
-## 🚀 Quick Setup (5 minutes)
+## How the website is organized
 
-### Local administrator setup
+The repository contains two Node.js projects:
 
-From the `kade-status-backend` folder, start the API once so it creates the SQLite tables. In a second backend terminal, run `npm run admin:add` and follow the prompts to create an administrator; the password is hidden while typing and must be at least 8 characters. Choose something memorable that you do not reuse elsewhere. Check the result with `npm run admin:list`. Keep `npm start` running while using the local frontend.
+| Folder | Role | Main technology |
+| --- | --- | --- |
+| `kade-status-frontend/` | Public portfolio pages and admin dashboard | React, Vite |
+| `kade-status-backend/` | API, authentication, email, SQLite database, document storage | Express, better-sqlite3, Nodemailer |
 
-On PowerShell, use `npm.cmd` if script execution blocks `npm` (for example, `npm.cmd run admin:add`). Run `npm run setup:check` whenever setup is unclear. It reports which backend folder and database file are in use, whether an admin exists, and what to do next without printing secrets.
+The frontend is a multi-page React app. Vite serves pages such as `contact.html`, `document.html`, and `admin-login.html`, while the React app selects the page component based on the URL. In development, Vite forwards `/api` requests to the backend on port 5000. In production, the frontend host rewrites `/api/*` requests to the backend.
 
-The local frontend uses only `http://localhost:5000/api`. It will not silently send local admin sign-in attempts to the deployed API when the local backend is stopped. Set `VITE_PORTFOLIO_API_BASE_URL` only when you intentionally want a different API.
-
-### 1. Prerequisites
-- Node.js 20+ installed
-- Gmail account with 2-Step Verification enabled
-
-### 2. Install Dependencies
-```bash
-cd Client-Side/kade-status-backend
-npm install
+```text
+Visitor or admin browser
+        |
+        | page requests and /api calls
+        v
+React/Vite frontend  ---- /api ---->  Express backend
+                                         |       |
+                                         |       +-- Gmail or configured SMTP
+                                         +---------- SQLite and uploaded files
 ```
 
-### 3. Setup Gmail App Password
-1. Go to [Google Account Security](https://myaccount.google.com/security)
-2. Enable "2-Step Verification" (if not already done)
-3. Go to "App passwords" section
-4. Select "Mail" and "Windows Computer" (or your device)
-5. Generate and copy the 16-character password
+The backend source is organized by API area under `src/api/`; route registration is in `src/routes/index.js`. The SQLite schema is initialized by `src/database/database.js` when the backend starts. Admin tools in `scripts/` use the same configured database path.
 
-### 4. Create .env File
-```bash
-cp .env.example .env
+## Requirements and local setup
+
+Use Node.js 20 or later. There is no root `package.json`; install and run the frontend and backend from their own folders.
+
+1. Open one terminal in `myportfolio/kade-status-backend` and install dependencies:
+
+   ```powershell
+   npm install
+   ```
+
+2. Copy `.env.example` to `.env`, then follow the comments in `.env.example` and the [Environment configuration](#environment-configuration) section. Keep `.env` private.
+
+3. Start the backend once to initialize the database tables:
+
+   ```powershell
+   npm start
+   ```
+
+   The API listens on `http://localhost:5000` unless `PORT` is set. Leave this terminal running.
+
+4. In a second terminal, open `myportfolio/kade-status-frontend` and install/start the frontend:
+
+   ```powershell
+   npm install
+   npm run dev
+   ```
+
+5. Open the local URL printed by Vite. The local frontend API proxy targets `http://127.0.0.1:5000`. Admin pages include `admin-login.html`, `admin.html`, `admin-homepage.html`, `admin-documents.html`, and `admin-downloads.html`.
+
+If PowerShell blocks the `npm` script, use `npm.cmd` (for example, `npm.cmd run admin:list`). Run commands from the correct project folder.
+
+### Creating the first local admin
+
+After the backend has initialized SQLite, open another terminal in `kade-status-backend` and run:
+
+```powershell
+npm run setup:check
+npm run admin:add
+npm run admin:list
 ```
 
-Edit `.env` with your credentials:
-```
-PORT=5000
-FRONTEND_URL=http://localhost:5500,http://127.0.0.1:5500
-EMAIL_USER=kadecomputerscience@gmail.com
-EMAIL_PASSWORD=your-16-char-password
-# Optional: set these to use an SMTP provider other than the Gmail default
-# SMTP_HOST=smtp.example.com
-# SMTP_PORT=587
-# SMTP_SECURE=false
-# SMTP_FROM=verified-sender@example.com
-ADMIN_EMAIL=kadecomputerscience@gmail.com
-ADMIN_PASSWORD=replace-with-your-own-password
-ADMIN_DISPLAY_NAME=David KWIZERA
-DATABASE_PATH=data/portfolio.sqlite
-PUBLIC_API_URL=https://api.example.com
-COOKIE_SAME_SITE=lax
-NODE_ENV=development
-```
+`admin:add` asks for an email, display name, optional phone, and a password. Password input is hidden and the CLI requires at least 8 characters. If there are no tables yet, start the backend before running this command.
 
-`PUBLIC_API_URL` is optional. Without it, uploaded profile images use a same-origin `/api/...` URL, which works with the local Vite proxy and the Render frontend rewrite. Set it to the public backend origin (without a trailing `/api`) only when you need image URLs to point directly to a separate API domain.
+## Environment configuration
 
-For Render production, attach a persistent disk to the backend web service, mount it at `/var/data`, and set `STORAGE_DIR=/var/data` and `DATABASE_PATH=/var/data/portfolio.sqlite` in the service environment. Profile images and uploaded documents are written under `STORAGE_DIR`; SQLite uses `DATABASE_PATH`. Without a persistent disk, uploads and local database changes can be lost on service restart or redeploy. `STORAGE_DIR` is optional for local development.
+Use `.env.example` as the commented template. Copy it to `.env` for local use, replace the example email/password values, and restart the backend after editing it. On a hosting provider, set these values in that service's private environment settings instead of committing `.env`.
 
-The first server start creates the administrator account in SQLite from the `ADMIN_*` values. The password is stored as a salted scrypt hash; the administrator display name is read from the database after sign-in. Once the account exists, sign-in uses the database record and does not require the `ADMIN_*` values to remain configured. Changing bootstrap environment values does not overwrite an existing administrator record. The database file is excluded from Git; production hosting must provide persistent storage for `DATABASE_PATH`.
+| Variable | What it controls |
+| --- | --- |
+| `PORT` | Backend HTTP port. Defaults to `5000`. |
+| `NODE_ENV` | Use `development` locally and `production` on the deployed backend. |
+| `FRONTEND_URL` | Comma-separated frontend origins allowed by CORS. Use exact origins with no trailing slash. Password recovery links use the first configured origin, so put the deployed frontend first in production. |
+| `EMAIL_USER`, `EMAIL_PASSWORD` | SMTP identity and password for document verification and account recovery. For Gmail, use an App Password for the same account, not its normal password. |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_FROM` | Optional SMTP overrides for the general email service. Gmail is the default if `SMTP_HOST` is omitted. Port 587 normally uses `SMTP_SECURE=false`; port 465 normally uses `true`. |
+| `CONTACT_EMAIL_USER`, `CONTACT_EMAIL_PASSWORD` | Optional separate SMTP account for the public contact form. If omitted, the general `EMAIL_*` settings are the fallback. |
+| `CONTACT_NOTIFICATION_EMAIL` | Inbox that receives contact form messages. If omitted, the contact sender account (or general email account) is used. |
+| `CONTACT_SMTP_HOST`, `CONTACT_SMTP_PORT`, `CONTACT_SMTP_SECURE`, `CONTACT_SMTP_FROM` | Optional SMTP overrides and sender for the contact form. |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_DISPLAY_NAME`, `ADMIN_PHONE` | Bootstrap the first admin account when that email is not already in the database. Password must be at least 5 characters for bootstrap. |
+| `ADMIN_EMAIL_2`, `ADMIN_PASSWORD_2`, `ADMIN_DISPLAY_NAME_2`, `ADMIN_PHONE_2` | Optional second bootstrap admin. Set email, password, and display name together. |
+| `DATABASE_PATH` | SQLite file path. Absolute paths are recommended for deployed persistent storage. Relative paths resolve from the backend folder. |
+| `STORAGE_DIR` | Root folder for uploaded profile images and PDFs. If `DATABASE_PATH` is blank, SQLite is stored here as `portfolio.sqlite`. |
+| `PUBLIC_API_URL` | Optional HTTPS backend base used to generate direct profile-image URLs. Usually leave the local example value for local development. |
+| `COOKIE_SAME_SITE` | Admin session cookie policy. `lax` is suitable for local development and the current same-origin production `/api` rewrite. |
 
-For compatibility, `ADMIN_PASSWORD` bootstrap accepts at least 5 characters. The interactive `admin:add` and `admin:reset-password` commands require 8 characters. Use a memorable, unique password and consider a longer passphrase if that is easier to remember.
+The placeholders in `.env.example` cannot deliver email or create a usable admin login. Never paste real credentials into the example file, source code, README, or chat. If an email provider rejects credentials, check its code in the backend log; a configured value being present does not mean the provider accepted it.
 
-The downloadable CV and EBC PDF files live in `private-documents/`, outside the public frontend assets. CV and certificate PDFs uploaded through the admin dashboard are stored in that same private directory, while their public display details are stored in SQLite. Profile images uploaded from the landing-page editor are checked for supported image signatures and saved under the backend's `profile-images/` directory. Keep these backend assets deployed and back them up with the database.
+## Database and uploaded files
 
-For an existing installation, update the administrator's email in the SQLite `admin_users` table as well as changing `ADMIN_EMAIL`; changing the bootstrap setting alone does not change the stored login email.
+SQLite is the application's database. The default local database is `kade-status-backend/data/portfolio.sqlite`. Set `DATABASE_PATH` to choose another file. If `DATABASE_PATH` is blank and `STORAGE_DIR` is set, the database is `<STORAGE_DIR>/portfolio.sqlite`.
 
-### Reset an administrator password
+The backend creates or updates the schema at startup. Main tables include:
 
-From the backend directory, run `npm run admin:reset-password`. Enter the administrator's email and a new password of at least 8 characters when prompted. Password input is hidden, the database stores only a salted hash, and existing sessions for that administrator are revoked. The command uses `DATABASE_PATH` from `.env` or the default `data/portfolio.sqlite` database.
+| Table | Data stored |
+| --- | --- |
+| `admin_users`, `admin_sessions` | Admin accounts and active sessions. Passwords are stored as salted hashes. |
+| `portfolio_settings` | Published homepage content as JSON. |
+| `contact_messages` | Successfully emailed contact submissions: name, email, phone, message, and timestamp. |
+| `portfolio_documents` | CV/certificate metadata and stored filenames. |
+| `download_enquiries` | Visitor requests after email verification. |
+| `download_email_verifications`, `download_verification_limits`, `download_access_tokens`, `document_preview_tokens` | Temporary verification challenges, anti-abuse limits, and short-lived download or one-use preview authorization. |
+| `admin_password_resets` | Hashed, expiring password-reset tokens. |
 
-### Quick database commands
+Contact messages include personal information. They are included in the owner notification email and saved to SQLite after the email delivery call completes. There is currently no admin page or API endpoint for browsing the `contact_messages` table; `db:inspect` shows only its row count.
 
-Run these from the backend directory:
+Uploaded profile images and administrator-uploaded PDFs are stored as files, while their references/metadata are stored in SQLite. Local files are under the backend folder. For Render, attach a persistent disk to the **backend web service**, mount it at `/var/data`, and set:
 
-- `npm run admin:list` lists administrator email addresses, display names, and creation dates. It never displays password hashes.
-- `npm run admin:add` adds an administrator directly to SQLite. Enter their email and display name, then a new password of at least 8 characters when prompted. Password input is hidden.
-- `npm run db:inspect` lists database tables and their row counts without printing their contents.
-- `npm run admin:reset-password` resets an existing administrator password and revokes that administrator's sessions.
-
-These commands use the same SQLite file configured by `DATABASE_PATH` in `.env`.
-
-The deployed frontend origin (`https://david-portifolio.onrender.com`) and the supported local development origins are allowed by default. `FRONTEND_URL` can add exact frontend origins, separated by commas. Do not use `*` for authenticated requests.
-
-### 5. Start the Server
-```bash
-npm start
+```text
+STORAGE_DIR=/var/data
+DATABASE_PATH=/var/data/portfolio.sqlite
 ```
 
-Run the backend with `npm start`, then run the React frontend from `kade-status-frontend` with `npm install` and `npm run dev` in a second terminal. Open the URL printed by Vite and visit `admin-login.html`. Vite proxies local `/api` requests to the backend at `http://127.0.0.1:5000`. For Render production, the frontend's `render.yaml` rewrites `/api/*` to the Render backend while keeping the browser on the frontend origin; this lets mobile browsers store the admin session cookie as a first-party cookie. On localhost, the frontend uses only the local backend so a development sign-in cannot silently go to production. Set `VITE_PORTFOLIO_API_BASE_URL` only when intentionally overriding these API URLs.
+Without persistent storage, local SQLite data and uploaded files can disappear when the service restarts or redeploys. A local `.env` and local SQLite file do not configure or update the hosted database. Back up/migrate an existing database before switching its configured path; starting with a new empty database does not copy the old records.
 
-## Admin Authentication
+## Available project commands
 
-- `POST /api/auth/login` accepts `{ "email": "...", "password": "..." }` and issues an HTTP-only session cookie.
-- `GET /api/auth/me` returns the signed-in administrator's database-backed display name and email.
-- `POST /api/auth/logout` revokes the current server-side session.
-- `GET /api/homepage` returns the public landing-page content.
-- `PUT /api/homepage` lets an authenticated admin publish landing-page text, images, links, cards, and section visibility to the shared database.
-- `POST /api/homepage/reset` restores the default landing-page content for authenticated admins.
-- `POST /api/downloads/request` validates a visitor's name, email, purpose, and consent, then sends a one-time code by email. It does not create a request or issue download authorization until the email is verified.
-- `POST /api/downloads/verify` accepts `{ "challengeId": "...", "code": "123456" }`; codes expire after 10 minutes and allow five attempts. Code requests are limited to three per email/IP pair per 15-minute window. Missing email configuration or delivery errors do not grant access.
-- `POST /api/downloads/preview` displays a document inline using that authorization.
-- `GET /api/downloads/preview/:documentId` lets visitors view a published PDF inline without creating a download request; downloading remains gated by the verified contact form.
-- `POST /api/downloads/file` consumes the short-lived authorization and delivers the requested private file.
-- `GET /api/downloads` returns recent download requests to authenticated admins only.
-- `DELETE /api/downloads/:downloadId` removes a visitor request and its associated download tokens for authenticated admins.
-- `GET /api/documents` returns the public CV, EBC document, and certificates.
-- `POST /api/documents/cv` lets an authenticated admin publish a replacement CV PDF (up to 10 MB) with its visitor-facing title, description, issue date, and institution.
-- `POST /api/documents/certificates` lets an authenticated admin publish a certificate PDF and its title, description, issue date, and institution.
-- `PUT /api/documents/certificates/:documentId` lets an authenticated admin update certificate details or replace its PDF.
-- `POST /api/homepage/profile-image` accepts an authenticated JPG, PNG, or WebP profile-image upload (up to 5 MB) and updates the published landing-page image.
-- Invalid sign-ins are rate limited to five attempts per IP address per 15-minute window.
-- Sessions expire after eight hours. Keep `.env` and the SQLite database private, use HTTPS in production, and keep a persistent disk mounted for SQLite.
+These are project-specific npm shortcuts in this backend's `package.json`; they are not built-in SQLite commands. Run them from `kade-status-backend`:
 
-The visitor download form requires `documentId`, `name`, `email`, `reason` (10–1,000 characters), and `consent: true`. A successful `/api/downloads/request` returns a `challengeId` and expiry; the actual one-time code is never sent back to the browser. Visitors can request another code from the verification step; requests remain limited to three per email/IP pair per 15-minute window. The visitor must enter the six-digit code received by email and pass `/api/downloads/verify` before receiving the short-lived download token. Gmail uses `EMAIL_USER` and a Gmail app password in `EMAIL_PASSWORD` (with 2-Step Verification enabled). To use a different SMTP provider, also set `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE` (`true` or `false`), and optionally `SMTP_FROM`. Add these values to the backend's private `.env` or hosting-provider secret settings, restart the backend after changing them, and never run the test environment in production. The `.env.example` values are placeholders and cannot deliver messages.
+| Command | What it does |
+| --- | --- |
+| `npm start` | Starts the backend server. |
+| `npm run setup:check` | Reports the backend folder, configured database path, and whether the database contains admins. Does not print secrets. |
+| `npm run admin:list` | Lists admin IDs, emails, display names, and creation dates; does not display password hashes. |
+| `npm run admin:add` | Interactively adds an admin. Password entry is hidden. |
+| `npm run setup:admin` | Alias for `admin:add`. |
+| `npm run admin:reset-password` | Changes an existing admin's password and revokes that admin's active sessions. Password entry is hidden. |
+| `npm run db:inspect` | Lists database tables and row counts, not the table contents. |
+| `npm test` | Runs the backend Node test suite. |
 
-The request endpoint reports success only after the email provider accepts the message. If delivery fails, it removes the temporary challenge and releases that request's rate-limit reservation so the visitor can retry; delivery logs contain provider error codes only, not message content, OTPs, or recipient details.
+The project does **not** currently provide `admin:update`, `admin:delete`, or `db:backup` commands. The admin portal also does not currently edit or delete admin accounts. Changing `ADMIN_*` values in `.env` does not update an account that already exists in SQLite. Avoid manual `DELETE` or `UPDATE` SQL unless you have a verified backup and know which database file the running app uses.
 
-If Gmail returns `EAUTH` with response code `535`, Gmail has rejected the configured SMTP credentials. `EMAIL_PASSWORD` must be a Google App Password generated for the same account in `EMAIL_USER` (not the account's regular password); App Passwords require Google 2-Step Verification. Replace the value privately in `.env`, ensure it has no surrounding quotes or accidental whitespace, and restart the backend. The startup message only confirms that a value is present, not that Gmail accepts it. Never paste the password into terminal output, source code, or chat.
+These commands operate on the local database path resolved from that command's environment. They do not automatically connect to Render's database. To manage production data, use an approved maintenance connection to the production service/disk or the application admin interface. Do not download or expose the production SQLite file casually; it contains account and visitor data.
 
-The admin dashboard's **Landing page** editor publishes shared content for all site visitors. It controls the page title and description, branding and navigation, hero text and media, introduction, highlight cards, document call-to-action, footer links and contact details, and section visibility. Lists (navigation, cards, and footer links) are edited as JSON in the dashboard. The default page content is restored with the editor's **Restore defaults** action.
+## Admin workflow and limitations
 
-## 📡 API Endpoints
+### Homepage edits
 
-### POST /api/contact/send
-Send a contact form submission.
+1. Open **Landing page** in the admin portal and edit the fields.
+2. Select **Save & review** to prepare the preview.
+3. In the review screen select **Publish to homepage** to write the content to SQLite and make it public.
 
-**Request:**
+The first action alone is only a browser-side draft. **Restore defaults** intentionally replaces the published homepage content. Signing in or out does not modify published homepage content.
+
+### Documents and visitor requests
+
+- CV and certificate uploads require valid PDF files and admin authentication. The upload size limit is 10 MB.
+- The admin **Downloads & enquiries** page lists verified document requests and permits deletion of a request.
+- Visitors must verify their email before previewing or downloading a document. A preview does not create an admin request or save visitor details alongside the document; the email is used to send the code, and the anti-abuse limiter retains a hashed email and IP address. Verified downloads are recorded in the admin portal.
+- The admin **Accounts** page lists admins and can send a password-reset link. It cannot edit or delete accounts.
+- The admin **My profile** page displays account details and can publish an image for the admin only, both admin and public visitors, or public visitors only. Its three checkbox choices are mutually exclusive and use one **Publish image** button. Private admin images are returned only from an authenticated route.
+
+### Shared language and phone controls
+
+- The frontend keeps the shared language selector and translations in `kade-status-frontend/src/components/LanguageSelector.jsx` and `src/context/LanguageContext.jsx`. English, French, and Kiswahili are available. Visitor and admin preferences are saved separately in browser local storage, so changing one does not change the other.
+- The shared phone field is in `kade-status-frontend/src/components/PhoneNumberField.jsx` and is used in the contact form, document request form, and admin homepage contact-phone setting. It offers East African Community calling codes (Burundi, DR Congo, Kenya, Rwanda, Somalia, South Sudan, Tanzania, and Uganda). The selected code and number are checked and normalized to E.164 format by the frontend and backend.
+- The East African country list applies to phone numbers entered in these fields. It does not limit website visitors by their country or IP address. A valid number format does not prove that the number is active or reachable.
+- The language selector translates the interface text that has translations in the language catalog. Admin-authored homepage copy, document titles, and other visitor-provided content remain as entered; they are not automatically translated.
+
+## API reference
+
+All API routes are mounted beneath `/api`. Authenticated routes require the admin session cookie or supported bearer session token.
+
+| Method and path | Access | Purpose |
+| --- | --- | --- |
+| `GET /` | Public | Backend service identity. |
+| `GET /api/health` | Public | Health check (`{ "status": "OK" }`). |
+| `GET /api/homepage` | Public | Published homepage content and update timestamp. |
+| `PUT /api/homepage` | Admin | Validate and publish homepage content. |
+| `POST /api/homepage/reset` | Admin | Restore default homepage content. |
+| `POST /api/homepage/profile-image` | Admin | Upload JPG, PNG, or WebP profile image (maximum 5 MB); `visibility` is `admin`, `both`, or `public`. |
+| `GET /api/homepage/admin-profile-image` | Admin | Serve the admin-only image, or return no image when the admin visibility choice is public-only. |
+| `GET /api/homepage/profile-image/:filename` | Public | Retrieve an uploaded profile image. |
+| `POST /api/contact/` | Public | Submit name, email, East African phone number, and message; validates input, emails it, and saves it to SQLite after delivery. |
+| `GET /api/contact/status` | Public | Reports contact mail configuration and SMTP connection status. |
+| `POST /api/auth/login` | Public | Sign in and create an admin session. |
+| `GET /api/auth/me` | Admin | Return the current admin's email and display name. |
+| `POST /api/auth/logout` | Public | Revoke the current session. |
+| `GET /api/auth/admin-users` | Admin | List admin accounts. |
+| `POST /api/auth/admin-users/:adminId/password-reset` | Admin | Email a password-reset link to the selected account. |
+| `POST /api/auth/password-reset/request` | Public | Request an account recovery email. |
+| `POST /api/auth/password-reset/confirm` | Public | Confirm a valid recovery token and change password. |
+| `GET /api/documents` | Public | List published CV/document/certificate metadata. |
+| `POST /api/documents/cv` | Admin | Publish a CV PDF and metadata. |
+| `POST /api/documents/certificates` | Admin | Publish a certificate PDF and metadata. |
+| `PUT /api/documents/certificates/:documentId` | Admin | Update a published document's metadata or replace its PDF (the route currently handles CVs and other document types too). |
+| `DELETE /api/documents/:documentId` | Admin | Delete a published document and its file. |
+| `POST /api/downloads/request` | Public | Start email verification for a preview or download (`purpose: "preview"` or `"download"`). |
+| `POST /api/downloads/verify` | Public | Verify the emailed six-digit code. |
+| `GET /api/downloads/preview/:documentId` | Disabled | Returns `403`; direct previews are blocked. |
+| `POST /api/downloads/preview` | Public | Preview a PDF using the short-lived token returned after email verification. |
+| `POST /api/downloads/file` | Public | Consume authorization and download a private PDF. |
+| `POST /api/downloads/file-failed` | Public | Report a failed download so its status can be updated. |
+| `GET /api/downloads` | Admin | List visitor download requests. |
+| `DELETE /api/downloads/:downloadId` | Admin | Delete a visitor request and its associated tokens. |
+
+The contact JSON body is:
+
 ```json
 {
-  "name": "John Doe",
-  "email": "john@example.com",
-  "message": "Hello, I'm interested in your services!"
+  "name": "Jane Doe",
+  "email": "jane@example.com",
+  "phone": "+250 788 950 833",
+  "message": "I would like to discuss a project opportunity."
 }
 ```
 
-**Success Response (200):**
-```json
-{
-  "success": true,
-  "message": "Email sent successfully",
-  "data": {
-    "name": "John Doe",
-    "email": "john@example.com",
-    "timestamp": "2024-01-01T12:00:00.000Z"
-  }
-}
+Phone numbers may include spaces, parentheses, periods, hyphens, and a leading `+`. They must contain 7 to 15 digits. The form asks visitors to include a country code.
+
+For previews, only an email address and consent are required. The backend emails a verification code, then issues a one-use preview token after a valid code; it does not add the visitor to the admin request list or keep their email with the document. The anti-abuse limiter keeps a hashed email/IP pair. For downloads, the form also requires the visitor's name, phone number, and reason, and verified requests are recorded for admins. Codes expire after 10 minutes, allow five attempts, and code requests are limited to three per email/IP pair in a 15-minute window.
+
+## Build, checks, and deployment
+
+### Local checks
+
+Backend checks from `kade-status-backend`:
+
+```powershell
+npm test
+npm run setup:check
+npm run db:inspect
 ```
 
-**Error Response (400/500):**
-```json
-{
-  "success": false,
-  "error": "Error message describing what went wrong"
-}
+Frontend checks from `kade-status-frontend`:
+
+```powershell
+npm test
+npm run build
 ```
 
-### GET /api/health
-Check if the server is running.
+The frontend build writes static assets to `kade-status-frontend/dist`. Its Vite configuration also generates page shells for the public and admin URLs. Deploy the built `dist` folder as the static site.
 
-**Response:**
-```json
-{
-  "status": "OK",
-  "message": "Backend server is running",
-  "timestamp": "2024-01-01T12:00:00.000Z"
-}
-```
+### Current Render layout
 
-### GET /api/contact/status
-Check if email service is configured.
+The frontend `render.yaml` defines a static site and rewrites `/api/*` to the backend service URL. Deploy the frontend and backend as separate services. The backend needs its own environment variables and persistent disk; a frontend deploy does not deploy backend code or migrate its SQLite file.
 
-**Response:**
-```json
-{
-  "configured": true,
-  "email": "kadecomputerscience@gmail.com"
-}
-```
+The backend allows the known production frontend origin plus local development origins. Set `FRONTEND_URL` when using another frontend domain. Keep `FRONTEND_URL` exact and comma-separated; do not use `*` for authenticated requests.
 
-## 📁 Project Structure
-
-```
-Client-Side/kade-status-backend/
-├── server.js              # Main Express server
-├── routes/
-│   └── contact.js         # Contact form handler
-├── package.json           # Dependencies
-├── .env                   # Environment variables (with credentials)
-├── .env.example           # Template reference
-├── .gitignore             # Git configuration
-└── README.md              # This file
-```
-
-## 🧪 Testing
-
-### Option 1: Using cURL
-```bash
-curl -X POST http://localhost:5000/api/contact/send \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Test User",
-    "email": "test@example.com",
-    "message": "This is a test message"
-  }'
-```
-
-### Option 2: Using your portfolio website
-1. Navigate to your portfolio contact page
-2. Fill in the form and submit
-3. Check your email for confirmation
-
-## 🐛 Troubleshooting
-
-### "Connection refused" error
-**Problem:** Backend not running
-**Solution:** Make sure you ran `npm run dev` in the backend folder
-
-### "Invalid app password" error
-**Problem:** Gmail authentication failed
-**Solution:** 
-- Verify you generated the app password correctly
-- Ensure it's exactly 16 characters
-- Make sure 2FA is enabled on your Google account
-- Copy the password exactly (no extra spaces)
-
-### CORS error in browser console
-**Problem:** Frontend and backend not communicating
-**Solution:**
-- Update `FRONTEND_URL` in `.env` to match your frontend URL
-- For localhost: `FRONTEND_URL=http://localhost:3000`
-- For production: `FRONTEND_URL=https://your-domain.com`
-
-### Emails not being sent
-**Problem:** Email service not working
-**Solution:**
-1. Check `.env` file has correct EMAIL_USER and EMAIL_PASSWORD
-2. Make sure 2-Step Verification is enabled on Gmail
-3. Verify the app password is correct
-4. Check spam/trash folder
-5. Run `GET /api/contact/status` to check configuration
-
-## 🌍 Deployment
-
-### Render.com (Recommended - Free tier available)
-1. Push code to GitHub
-2. Create account at [render.com](https://render.com)
-3. Connect GitHub repository
-4. Create new Web Service
-5. Set environment variables in Render dashboard
-6. Deploy!
-
-### Railway.app
-1. Push code to GitHub
-2. Create account at [railway.app](https://railway.app)
-3. Connect GitHub
-4. Add environment variables
-5. Deploy!
-
-### Heroku (Note: Free tier ended, paid only)
-```bash
-npm install -g heroku
-heroku login
-heroku create your-app-name
-git push heroku main
-heroku config:set EMAIL_USER=kadecomputerscience@gmail.com
-heroku config:set EMAIL_PASSWORD=your-password
-heroku config:set FRONTEND_URL=https://your-domain.com
-```
-
-## 📚 Learn More
-
-- [Express.js Documentation](https://expressjs.com/)
-- [Nodemailer Guide](https://nodemailer.com/)
-- [Gmail App Passwords](https://support.google.com/accounts/answer/185833)
-- [CORS Documentation](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS)
-
-## 📝 Security Notes
-
-- ✅ Always keep `.env` file in `.gitignore`
-- ✅ Never commit passwords or secrets to Git
-- ✅ Use environment variables for sensitive data
-- ✅ Input validation prevents injection attacks
-- ✅ HTML escaping prevents XSS attacks
-- ✅ CORS configured to accept only your frontend
-
-## 📄 License
-
-MIT License - Feel free to use this project
-
-## 👤 Author
-
-Kade - Portfolio Backend
-
----
-
-**Need help?** Check the troubleshooting section or review the setup guide!
-# Kade Portfolio Backend
-
-A simple Node.js/Express backend for handling contact form submissions on your portfolio.
-
-## What This Does
-
-- Receives form submissions from your portfolio website
-- Sends you an email notification with the visitor's message
-- Sends the visitor a confirmation email
-- Handles validation and error handling
-
-## Installation & Setup
-
-### 1. Install Dependencies
-```bash
-cd kade-status-backend
-npm install
-```
-
-### 2. Configure Email (Gmail)
-
-This backend uses Gmail to send emails. Follow these steps:
-
-**Step A: Enable 2-Factor Authentication**
-- Go to [Google Account](https://myaccount.google.com)
-- Click "Security" in the left menu
-- Enable "2-Step Verification"
-
-**Step B: Generate App Password**
-- After enabling 2FA, go back to Security
-- Find "App passwords"
-- Select "Mail" and "Windows Computer" (or your device)
-- Google will generate a 16-character password
-- Copy this password
-
-**Step C: Create .env File**
-```bash
-cp .env.example .env
-```
-
-Then edit `.env` and add:
-```
-PORT=5000
-FRONTEND_URL=http://localhost:3000
-EMAIL_USER=kadecomputerscience@gmail.com
-EMAIL_PASSWORD=your-app-password-here
-```
-
-### 3. Run Backend
-
-**Development (with auto-refresh):**
-```bash
-npm run dev
-```
-
-**Production:**
-```bash
-npm start
-```
-
-Backend will run on `http://localhost:5000`
-
-## Testing Locally
-
-1. Start the backend: `npm run dev`
-2. The frontend will send requests to `http://localhost:5000/api/contact/send`
-3. Submit the contact form and check your email
-
-## Deployment
-
-### Option 1: Deploy to Render (Recommended)
-
-1. Push code to GitHub
-2. Go to [Render.com](https://render.com)
-3. Click "New +" → "Web Service"
-4. Select your GitHub repo
-5. Set environment variables:
-   - `PORT=5000`
-   - `EMAIL_USER=kadecomputerscience@gmail.com`
-   - `EMAIL_PASSWORD=your-app-password`
-   - `FRONTEND_URL=https://your-portfolio-url.com`
-6. Deploy!
-
-### Option 2: Deploy to Railway
-
-1. Go to [Railway.app](https://railway.app)
-2. Click "New Project" → "Deploy from GitHub"
-3. Select your repo
-4. Add environment variables (same as above)
-5. Deploy!
-
-### Option 3: Deploy to Heroku
-
-```bash
-heroku login
-heroku create your-app-name
-git push heroku main
-heroku config:set EMAIL_USER=kadecomputerscience@gmail.com
-heroku config:set EMAIL_PASSWORD=your-app-password
-```
-
-## Frontend Integration
-
-Update your contact form to POST to your backend. Replace the form action in `src/contact.html`:
-
-```javascript
-document.querySelector('.contact-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  
-  const formData = {
-    name: document.querySelector('input[placeholder="Your Name"]').value,
-    email: document.querySelector('input[placeholder="Your Email"]').value,
-    message: document.querySelector('textarea').value
-  };
-  
-  try {
-    const response = await fetch('http://localhost:5000/api/contact/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(formData)
-    });
-    
-    const data = await response.json();
-    if (data.success) {
-      alert('Message sent! Check your email for confirmation.');
-      e.target.reset();
-    } else {
-      alert('Error: ' + data.error);
-    }
-  } catch (error) {
-    alert('Failed to send message. Please try again.');
-  }
-});
-```
-
-## Endpoints
-
-- **POST** `/api/contact/send` - Submit contact form
-- **GET** `/api/health` - Check if backend is running
+When changing persistent database paths, preserve the previous database and uploaded files until the new location is confirmed. A redeploy cannot recover data that was already erased from an ephemeral filesystem.
 
 ## Troubleshooting
 
-**"Failed to send email"**
-- Check EMAIL_USER and EMAIL_PASSWORD in .env
-- Ensure Gmail App Password is correct (16 characters)
-- Make sure 2FA is enabled on Gmail account
+| Symptom | Check |
+| --- | --- |
+| Local API connection refused | Start `npm start` in the backend. The frontend proxy expects port 5000. Check `PORT` if using another port. |
+| Admin login says no admin exists | Run `npm run setup:check`; confirm it reports the database file you intend to use. Start the backend to create tables, then run `npm run admin:add`. |
+| Admin login rejects correct credentials | Confirm frontend points to the intended backend and that the admin exists in that backend's database. Environment bootstrap credentials do not overwrite an existing account. |
+| Contact form cannot send | Check required phone format, backend logs, `CONTACT_EMAIL_*` and `CONTACT_NOTIFICATION_EMAIL`; if contact settings are omitted, check `EMAIL_*`. For Gmail, use an App Password and restart after changing secrets. |
+| Contact form succeeds but confirmation email is absent | The owner notification can succeed while the visitor confirmation fails. Check backend logs and the visitor's spam folder. The message is still saved and sent to the owner. |
+| Browser reports CORS failure | Add the exact frontend origin to `FRONTEND_URL` and restart the backend. The origin includes scheme and optional port, but no path or trailing slash. |
+| Homepage edit is not visible | Complete both **Save & review** and **Publish to homepage**. Check that the browser is using the same backend as the admin session. |
+| Data disappears after a hosted restart/deploy | Confirm the backend has a persistent disk mounted and both `STORAGE_DIR` and `DATABASE_PATH` point to it. Local database files are separate from production. |
+| Uploaded profile image/document is missing | Check persistent `STORAGE_DIR`, the corresponding file on the backend disk, and the database record. Metadata in SQLite alone does not contain the PDF/image bytes. |
+| Forgot admin password | Use the reset page or `npm run admin:reset-password` against the correct local database. Recovery email requires working general `EMAIL_*` settings. |
 
-**CORS errors**
-- Update FRONTEND_URL in .env to match your frontend URL
-- For local testing, it's already set to http://localhost:3000
+## Safe maintenance notes
 
-**Port already in use**
-- Change PORT in .env to another number (e.g., 5001)
+- `cleanup-docs.mjs` is a destructive cleanup utility, not an npm shortcut. It deletes document rows when it cannot find their files in `private-documents`. Review the script and make a verified backup before running it; its path assumptions may not match a custom `STORAGE_DIR`.
+- Do not edit password hashes manually. Use `npm run admin:reset-password` for a local account or the recovery flow for the hosted account.
+- Before manual database maintenance, identify the exact database file using `npm run setup:check`. Stop the backend before copying a local SQLite file with ordinary file-copy tools. Do not point a local app at production data unintentionally.
+- `db:inspect` reports counts, not contact contents. There is no built-in database backup, admin update, or admin delete shortcut at present.
+- Keep `.env`, SQLite files, and uploaded private PDFs out of Git. Use hosting-provider secret settings for production credentials and rotate any credential that was exposed.
+- The project uses SQLite and one backend database file. If deploying multiple backend instances, they must not each use separate local SQLite files; use one supported shared/persistent data design before scaling out.

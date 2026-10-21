@@ -12,5 +12,11 @@ export function resolveBackendPath(configuredPath, fallbackPath) {
 }
 
 export function getDatabasePath() {
-  return resolveBackendPath(process.env.DATABASE_PATH, path.join('data', 'portfolio.sqlite'));
+  if (process.env.DATABASE_PATH) {
+    return resolveBackendPath(process.env.DATABASE_PATH, path.join('data', 'portfolio.sqlite'));
+  }
+  if (process.env.STORAGE_DIR) {
+    return path.join(path.resolve(process.env.STORAGE_DIR), 'portfolio.sqlite');
+  }
+  return resolveBackendPath(undefined, path.join('data', 'portfolio.sqlite'));
 }

@@ -6,9 +6,11 @@ import database from '../../database/database.js';
 import { resolveWritableDirectory, resolveWritablePath } from '../../config/storage.js';
 import { defaultHomepageContent, validateHomepageContent } from '../../config/homepage-content.js';
 import { requireAdmin } from '../../verification/admin-auth.js';
+import { parseEastAfricanPhone } from '../../utils/east-africa-phone.js';
 
 const router = express.Router();
 const CONTENT_KEY = 'homepage';
+const ADMIN_PROFILE_IMAGE_KEY = 'admin_profile_image';
 const profileImagesDirectory = resolveWritableDirectory('profile-images');
 const MAX_PROFILE_IMAGE_SIZE = 5 * 1024 * 1024;
 const profileImageTypes = {
@@ -66,6 +68,26 @@ function saveHomepageContent(content) {
   return updatedAt;
 }
 
+function readAdminProfileImage() {
+  const row = database.prepare('SELECT value_json FROM portfolio_settings WHERE setting_key = ?').get(ADMIN_PROFILE_IMAGE_KEY);
+  return row ? JSON.parse(row.value_json) : null;
+}
+
+function saveAdminProfileImage(filename, visibility) {
+  const updatedAt = new Date().toISOString();
+  database.prepare(`
+    INSERT INTO portfolio_settings (setting_key, value_json, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(setting_key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
+  `).run(ADMIN_PROFILE_IMAGE_KEY, JSON.stringify({ filename, visibility }), updatedAt);
+}
+
+function profileImageFilename(imageUrl) {
+  return typeof imageUrl === 'string'
+    ? imageUrl.match(/\/api\/homepage\/profile-image\/(profile-[0-9a-f-]{36}\.(?:jpg|png|webp))$/)?.[1]
+    : undefined;
+}
+
 router.get('/', (req, res, next) => {
   try {
     return res.json({ success: true, ...readHomepageRecord() });
@@ -74,9 +96,39 @@ router.get('/', (req, res, next) => {
   }
 });
 
+router.get('/admin-profile-image', requireAdmin, (req, res, next) => {
+  try {
+    const imageSetting = readAdminProfileImage() || {};
+    if (imageSetting.visibility === 'public') return res.status(204).end();
+    const { filename } = imageSetting;
+    if (typeof filename !== 'string' || !/^profile-[0-9a-f-]{36}\.(jpg|png|webp)$/.test(filename)) {
+      return res.status(404).json({ success: false, error: 'No private admin profile image has been selected.' });
+    }
+    const extension = path.extname(filename);
+    const contentType = extension === '.jpg' ? 'image/jpeg' : `image/${extension.slice(1)}`;
+    return res.sendFile(resolveWritablePath('profile-images', filename), {
+      headers: {
+        'Content-Type': contentType,
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'private, no-store'
+      }
+    }, (error) => {
+      if (error && !res.headersSent) {
+        if (error.code === 'ENOENT') return res.status(404).json({ success: false, error: 'Admin profile image not found.' });
+        return next(error);
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.get('/profile-image/:filename', (req, res, next) => {
   const filename = req.params.filename;
   if (!/^profile-[0-9a-f-]{36}\.(jpg|png|webp)$/.test(filename)) {
+    return res.status(404).json({ success: false, error: 'Profile image not found.' });
+  }
+  if (profileImageFilename(readHomepageContent()?.brand?.imageUrl) !== filename) {
     return res.status(404).json({ success: false, error: 'Profile image not found.' });
   }
   const extension = path.extname(filename);
@@ -98,6 +150,9 @@ router.get('/profile-image/:filename', (req, res, next) => {
 router.put('/', requireAdmin, (req, res, next) => {
   try {
     const content = validateHomepageContent(req.body?.content);
+    if (content.footer?.phone && !parseEastAfricanPhone(content.footer.phone)) {
+      return res.status(400).json({ success: false, error: 'Enter a valid East African phone number with its country calling code.' });
+    }
     const updatedAt = saveHomepageContent(content);
     return res.json({ success: true, content, updatedAt });
   } catch (error) {
@@ -109,6 +164,10 @@ router.post('/profile-image', requireAdmin, async (req, res, next) => {
   let storedFilename;
   try {
     const dataUrl = typeof req.body?.image === 'string' ? req.body.image : '';
+    const visibility = req.body?.visibility || 'both';
+    if (!['admin', 'both', 'public'].includes(visibility)) {
+      return res.status(400).json({ success: false, error: 'Choose admin only, both, or public only for this image.' });
+    }
     const match = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(dataUrl);
     if (!match) {
       return res.status(400).json({ success: false, error: 'Choose a valid JPG, PNG, or WebP profile image.' });
@@ -126,8 +185,20 @@ router.post('/profile-image', requireAdmin, async (req, res, next) => {
     storedFilename = `profile-${randomUUID()}.${extension}`;
     await writeFile(resolveWritablePath('profile-images',  storedFilename), content, { flag: 'wx' });
 
+    if (visibility === 'admin') {
+      const previousAdminImage = readAdminProfileImage();
+      saveAdminProfileImage(storedFilename, visibility);
+      if (previousAdminImage?.filename && previousAdminImage.filename !== storedFilename) {
+        await unlink(resolveWritablePath('profile-images', previousAdminImage.filename)).catch((cleanupError) => {
+          if (cleanupError.code !== 'ENOENT') console.error('Could not remove the replaced private admin image:', cleanupError);
+        });
+      }
+      return res.status(201).json({ success: true, visibility: 'admin' });
+    }
+
     const homepage = structuredClone(readHomepageContent());
     const previousImageUrl = homepage.brand.imageUrl;
+    const previousAdminImage = readAdminProfileImage();
     const imagePath = `/api/homepage/profile-image/${storedFilename}`;
     // A stale localhost PUBLIC_API_URL makes every visitor's browser request
     // the image from their own computer. Keep the image path relative unless
@@ -136,12 +207,17 @@ router.post('/profile-image', requireAdmin, async (req, res, next) => {
     homepage.brand.imageUrl = publicApiBase ? `${publicApiBase}${imagePath}` : imagePath;
     const updatedHomepage = validateHomepageContent(homepage);
     const updatedAt = saveHomepageContent(updatedHomepage);
-    const previousFilename = typeof previousImageUrl === 'string'
-      ? previousImageUrl.match(/\/api\/homepage\/profile-image\/(profile-[0-9a-f-]{36}\.(?:jpg|png|webp))$/)?.[1]
-      : undefined;
+    if (visibility === 'public') saveAdminProfileImage(null, 'public');
+    else database.prepare('DELETE FROM portfolio_settings WHERE setting_key = ?').run(ADMIN_PROFILE_IMAGE_KEY);
+    const previousFilename = profileImageFilename(previousImageUrl);
     if (previousFilename && previousFilename !== storedFilename) {
       await unlink(resolveWritablePath('profile-images',  previousFilename)).catch((cleanupError) => {
         if (cleanupError.code !== 'ENOENT') console.error('Could not remove the replaced profile image:', cleanupError);
+      });
+    }
+    if (previousAdminImage?.filename && previousAdminImage.filename !== storedFilename && previousAdminImage.filename !== previousFilename) {
+      await unlink(resolveWritablePath('profile-images', previousAdminImage.filename)).catch((cleanupError) => {
+        if (cleanupError.code !== 'ENOENT') console.error('Could not remove the replaced private admin image:', cleanupError);
       });
     }
     return res.status(201).json({ success: true, imageUrl: updatedHomepage.brand.imageUrl, updatedAt });

@@ -5,6 +5,7 @@ import database from '../../database/database.js';
 import { resolveWritablePath } from '../../config/storage.js';
 import { getMailFromAddress, getTransporter } from '../../config/mailer.js';
 import { requireAdmin } from '../../verification/admin-auth.js';
+import { parseEastAfricanPhone } from '../../utils/east-africa-phone.js';
 
 const router = express.Router();
 const TOKEN_DURATION_MS = 5 * 60 * 1000;
@@ -66,6 +67,24 @@ function getAuthorizedDownload(token) {
   };
 }
 
+function consumeAuthorizedPreview(token) {
+  if (!token || token.length > 100) return null;
+  const tokenHash = hashToken(token);
+  return database.transaction(() => {
+    const accessToken = database.prepare(`
+      SELECT document_preview_tokens.token_hash, portfolio_documents.document_id,
+        portfolio_documents.title, portfolio_documents.filename,
+        portfolio_documents.stored_filename
+      FROM document_preview_tokens
+      JOIN portfolio_documents ON portfolio_documents.document_id = document_preview_tokens.document_id
+      WHERE document_preview_tokens.token_hash = ? AND document_preview_tokens.expires_at > ?
+    `).get(tokenHash, Date.now());
+    if (!accessToken) return null;
+    const consumed = database.prepare('DELETE FROM document_preview_tokens WHERE token_hash = ?').run(tokenHash);
+    return consumed.changes === 1 ? accessToken : null;
+  })();
+}
+
 router.post('/request', async (req, res, next) => {
   try {
     const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
@@ -74,8 +93,10 @@ router.post('/request', async (req, res, next) => {
     const channel = req.body?.channel === 'email' ? 'email' : '';
     const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
     const documentId = typeof req.body?.documentId === 'string' ? req.body.documentId : '';
+    const purpose = req.body?.purpose === 'preview' ? 'preview' : 'download';
     const verifiedEmail = channel === 'email' ? email : '';
-    const verifiedPhone = phone;
+    const parsedPhone = parseEastAfricanPhone(phone);
+    const verifiedPhone = parsedPhone?.number || '';
     const storedDocument = database.prepare(`
       SELECT document_id, title, filename, stored_filename
       FROM portfolio_documents WHERE document_id = ?
@@ -87,11 +108,11 @@ router.post('/request', async (req, res, next) => {
       storedName: storedDocument.stored_filename
     } : null;
 
-    if (name.length < 2 || name.length > 100) {
+    if (purpose !== 'preview' && (name.length < 2 || name.length > 100)) {
       return res.status(400).json({ success: false, error: 'Enter your name (2 to 100 characters).' });
     }
-    if (phone.length < 7 || phone.length > 30 || !/^[+\d][\d\s().-]{6,29}$/.test(phone)) {
-      return res.status(400).json({ success: false, error: 'Enter a valid phone number (7 to 30 characters).' });
+    if (purpose !== 'preview' && (phone.length > 30 || !parsedPhone)) {
+      return res.status(400).json({ success: false, error: 'Enter a valid East African phone number with its country calling code.' });
     }
     if (!channel) {
       return res.status(400).json({ success: false, error: 'Enter an email address to receive your verification code.' });
@@ -99,7 +120,7 @@ router.post('/request', async (req, res, next) => {
     if (channel === 'email' && (email.length > 254 || !validEmail(email))) {
       return res.status(400).json({ success: false, error: 'Enter a valid email address.' });
     }
-    if (reason.length < 10 || reason.length > 1000) {
+    if (purpose !== 'preview' && (reason.length < 10 || reason.length > 1000)) {
       return res.status(400).json({ success: false, error: 'Describe why you need the document (10 to 1,000 characters).' });
     }
     if (req.body?.consent !== true) {
@@ -156,11 +177,16 @@ router.post('/request', async (req, res, next) => {
       database.prepare(`
         INSERT INTO download_email_verifications
           (challenge_id, name, email, phone, reason, document_id, document_label, filename,
-            code_hash, expires_at, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            purpose, code_hash, expires_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
-        challengeId, name, verifiedEmail, verifiedPhone, reason, document.id, document.label, document.filename,
-        hashVerificationCode(challengeId, code), now + VERIFICATION_DURATION_MS, now
+        challengeId,
+        purpose === 'preview' ? '' : name,
+        purpose === 'preview' ? '' : verifiedEmail,
+        purpose === 'preview' ? null : verifiedPhone,
+        purpose === 'preview' ? '' : reason,
+        document.id, document.label, document.filename,
+        purpose, hashVerificationCode(challengeId, code), now + VERIFICATION_DURATION_MS, now
       );
       return { windowStartedAt };
     });
@@ -227,7 +253,7 @@ router.post('/verify', async (req, res, next) => {
 
     const challenge = database.prepare(`
       SELECT challenge_id AS challengeId, name, email, phone, reason,
-        document_id AS documentId, document_label AS documentLabel, filename,
+        document_id AS documentId, document_label AS documentLabel, filename, purpose,
         code_hash AS codeHash, expires_at AS expiresAt, attempts
       FROM download_email_verifications WHERE challenge_id = ?
     `).get(challengeId);
@@ -262,14 +288,21 @@ router.post('/verify', async (req, res, next) => {
     }
     await access(resolveWritablePath('private-documents',  document.stored_filename));
 
-    const requestedAt = new Date().toISOString();
     const token = randomBytes(32).toString('base64url');
-    const createVerifiedRequest = database.transaction(() => {
+    const requestedAt = new Date().toISOString();
+    const completeVerification = database.transaction(() => {
       const consumed = database.prepare(`
         DELETE FROM download_email_verifications
         WHERE challenge_id = ? AND code_hash = ? AND expires_at > ? AND attempts < ?
       `).run(challengeId, challenge.codeHash, Date.now(), MAX_CODE_ATTEMPTS);
       if (consumed.changes !== 1) return null;
+      if (challenge.purpose === 'preview') {
+        database.prepare('DELETE FROM document_preview_tokens WHERE expires_at <= ?').run(Date.now());
+        database.prepare(`
+          INSERT INTO document_preview_tokens (token_hash, document_id, expires_at) VALUES (?, ?, ?)
+        `).run(hashToken(token), challenge.documentId, Date.now() + TOKEN_DURATION_MS);
+        return true;
+      }
       const result = database.prepare(`
         INSERT INTO download_enquiries
           (name, email, phone, reason, document_id, document_label, requested_at)
@@ -284,9 +317,16 @@ router.post('/verify', async (req, res, next) => {
       `).run(hashToken(token), result.lastInsertRowid, Date.now() + TOKEN_DURATION_MS);
       return result.lastInsertRowid;
     });
-    const downloadId = createVerifiedRequest();
-    if (!downloadId) {
+    const downloadId = completeVerification();
+    if (challenge.purpose !== 'preview' && !downloadId) {
       return res.status(410).json({ success: false, error: 'That verification code is no longer valid. Request a new code.' });
+    }
+
+    if (challenge.purpose === 'preview') {
+      if (downloadId !== true) {
+        return res.status(410).json({ success: false, error: 'That verification code is no longer valid. Request a new code.' });
+      }
+      return res.status(201).json({ success: true, downloadToken: token, filename: document.filename });
     }
 
     let notificationSent = false;
@@ -327,59 +367,34 @@ router.post('/verify', async (req, res, next) => {
 });
 
 router.get('/preview/:documentId', async (req, res, next) => {
-  try {
-    const document = database.prepare(`
-      SELECT title, filename, stored_filename
-      FROM portfolio_documents WHERE document_id = ?
-    `).get(req.params.documentId);
-    if (!document) {
-      return res.status(404).json({ success: false, error: 'This document is no longer available.' });
-    }
-
-    const filePath = resolveWritablePath('private-documents',  document.stored_filename);
-    try {
-      await access(filePath);
-    } catch {
-      return res.status(404).json({ success: false, error: 'This document is no longer available.' });
-    }
-    res.set({
-      'Cache-Control': 'private, no-store',
-      'X-Content-Type-Options': 'nosniff'
-    });
-    return res.sendFile(filePath, {
-      headers: {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `inline; filename="${document.filename}"`
-      }
-    }, (error) => {
-      if (error) {
-        if (!res.headersSent) return next(error);
-        console.error(`Could not preview public document "${document.title}":`, error);
-      }
-    });
-  } catch (error) {
-    return next(error);
-  }
+  return res.status(403).json({
+    success: false,
+    error: 'Direct document previews are disabled. Verify your email before opening a preview.'
+  });
 });
 
 router.post('/preview', (req, res, next) => {
   try {
     const token = typeof req.body?.token === 'string' ? req.body.token : '';
-    const accessToken = getAuthorizedDownload(token);
+    const accessToken = consumeAuthorizedPreview(token);
     if (!accessToken) {
       return res.status(403).json({ success: false, error: 'This preview has expired. Submit your details again.' });
     }
 
-    const filePath = resolveWritablePath('private-documents',  accessToken.document.storedName);
+    const filePath = resolveWritablePath('private-documents', accessToken.stored_filename);
+    res.set({
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff'
+    });
     res.sendFile(filePath, {
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `inline; filename="${accessToken.document.filename}"`
+          'Content-Disposition': `inline; filename="${accessToken.filename}"`
       }
     }, (error) => {
       if (error) {
         if (!res.headersSent) return next(error);
-        console.error(`Could not preview download request ${accessToken.download_id}:`, error);
+        console.error(`Could not serve verified document preview ${accessToken.document_id}:`, error);
       }
     });
   } catch (error) {

@@ -2,10 +2,11 @@ import nodemailer from 'nodemailer';
 
 export const getTransporter = (purpose = 'otp') => {
   const isContact = purpose === 'contact';
-  const user = (isContact ? process.env.CONTACT_EMAIL_USER : process.env.EMAIL_USER)
-    || (isContact ? process.env.EMAIL_USER : '');
-  const pass = (isContact ? process.env.CONTACT_EMAIL_PASSWORD : process.env.EMAIL_PASSWORD)
-    || (isContact ? process.env.EMAIL_PASSWORD : '');
+  const user = ((isContact ? process.env.CONTACT_EMAIL_USER : process.env.EMAIL_USER)
+    || (isContact ? process.env.EMAIL_USER : '') || '').trim();
+  // Gmail formats App Passwords with spaces for display; remove separators for SMTP auth.
+  const pass = ((isContact ? process.env.CONTACT_EMAIL_PASSWORD : process.env.EMAIL_PASSWORD)
+    || (isContact ? process.env.EMAIL_PASSWORD : '') || '').replace(/\s+/g, '');
   const timeoutOptions = {
     connectionTimeout: 10_000,
     greetingTimeout: 10_000,
@@ -29,6 +30,10 @@ export const getTransporter = (purpose = 'otp') => {
       auth: { user, pass },
       ...timeoutOptions
     });
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user)) {
+    throw new Error(`${isContact ? 'CONTACT_EMAIL_USER' : 'EMAIL_USER'} must be a valid email address when using Gmail SMTP.`);
   }
 
   return nodemailer.createTransport({
