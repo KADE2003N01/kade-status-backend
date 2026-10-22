@@ -4,7 +4,7 @@ import express from 'express';
 import database from '../../database/database.js';
 import { resolveWritablePath } from '../../config/storage.js';
 import { getMailFromAddress, getTransporter } from '../../config/mailer.js';
-import { requireAdmin } from '../../verification/admin-auth.js';
+import { requireAdmin, requireAdminRole } from '../../verification/admin-auth.js';
 import { parseInternationalPhone } from '../../utils/international-phone.js';
 
 const router = express.Router();
@@ -442,7 +442,7 @@ router.post('/file-failed', (req, res, next) => {
   } catch (error) { return next(error); }
 });
 
-router.get('/', requireAdmin, (req, res, next) => {
+router.get('/', requireAdmin, requireAdminRole('portfolio_owner', 'download_manager'), (req, res, next) => {
   try {
     const downloads = database.prepare(`
       SELECT download_enquiries.id, name, email, phone, reason,
@@ -465,7 +465,7 @@ router.get('/', requireAdmin, (req, res, next) => {
   }
 });
 
-router.delete('/:downloadId', requireAdmin, (req, res, next) => {
+router.delete('/:downloadId', requireAdmin, requireAdminRole('portfolio_owner', 'download_manager'), (req, res, next) => {
   try {
     const downloadId = Number(req.params.downloadId);
     if (!Number.isSafeInteger(downloadId) || downloadId < 1) {

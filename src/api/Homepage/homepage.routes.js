@@ -5,7 +5,7 @@ import express from 'express';
 import database from '../../database/database.js';
 import { resolveWritableDirectory, resolveWritablePath } from '../../config/storage.js';
 import { defaultHomepageContent, validateHomepageContent } from '../../config/homepage-content.js';
-import { requireAdmin } from '../../verification/admin-auth.js';
+import { requireAdmin, requireAdminRole } from '../../verification/admin-auth.js';
 import { parseInternationalPhone } from '../../utils/international-phone.js';
 
 const router = express.Router();
@@ -96,7 +96,7 @@ router.get('/', (req, res, next) => {
   }
 });
 
-router.get('/admin-profile-image', requireAdmin, (req, res, next) => {
+router.get('/admin-profile-image', requireAdmin, requireAdminRole('portfolio_owner', 'profile_manager'), (req, res, next) => {
   try {
     const imageSetting = readAdminProfileImage() || {};
     if (imageSetting.visibility === 'public') return res.status(204).end();
@@ -147,7 +147,7 @@ router.get('/profile-image/:filename', (req, res, next) => {
   });
 });
 
-router.put('/', requireAdmin, (req, res, next) => {
+router.put('/', requireAdmin, requireAdminRole('portfolio_owner', 'content_manager'), (req, res, next) => {
   try {
     const content = validateHomepageContent(req.body?.content);
     if (content.footer?.phone && !parseInternationalPhone(content.footer.phone)) {
@@ -160,13 +160,16 @@ router.put('/', requireAdmin, (req, res, next) => {
   }
 });
 
-router.post('/profile-image', requireAdmin, async (req, res, next) => {
+router.post('/profile-image', requireAdmin, requireAdminRole('portfolio_owner', 'profile_manager'), async (req, res, next) => {
   let storedFilename;
   try {
     const dataUrl = typeof req.body?.image === 'string' ? req.body.image : '';
     const visibility = req.body?.visibility || 'both';
     if (!['admin', 'both', 'public'].includes(visibility)) {
       return res.status(400).json({ success: false, error: 'Choose admin only, both, or public only for this image.' });
+    }
+    if (visibility !== 'admin' && req.adminUser?.role !== 'platform_owner') {
+      return res.status(403).json({ success: false, error: 'Only the controlling super admin can publish profile images to the shared public site.' });
     }
     const match = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(dataUrl);
     if (!match) {
@@ -231,7 +234,7 @@ router.post('/profile-image', requireAdmin, async (req, res, next) => {
   }
 });
 
-router.post('/reset', requireAdmin, (req, res, next) => {
+router.post('/reset', requireAdmin, requireAdminRole('portfolio_owner', 'content_manager'), (req, res, next) => {
   try {
     const updatedAt = saveHomepageContent(defaultHomepageContent);
     return res.json({ success: true, content: defaultHomepageContent, updatedAt });

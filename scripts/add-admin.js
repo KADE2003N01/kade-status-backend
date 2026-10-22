@@ -29,11 +29,12 @@ try {
 
       const salt = randomBytes(16).toString('hex');
       const passwordHash = scryptSync(password, salt, 64).toString('hex');
+      const isFirstAccount = !database.prepare("SELECT id FROM admin_users WHERE role = 'platform_owner' LIMIT 1").get();
       database.prepare(`
-        INSERT INTO admin_users (email, display_name, password_hash, phone)
-        VALUES (?, ?, ?, ?)
-      `).run(email, displayName, `${salt}:${passwordHash}`, phone || null);
-      console.log(`Admin account created for ${email}.`);
+        INSERT INTO admin_users (email, display_name, password_hash, phone, role, status)
+        VALUES (?, ?, ?, ?, ?, 'active')
+      `).run(email, displayName, `${salt}:${passwordHash}`, phone || null, isFirstAccount ? 'platform_owner' : 'portfolio_owner');
+      console.log(`Admin account created for ${email}${isFirstAccount ? ' as platform owner' : ''}.`);
     } finally {
       database.close();
     }

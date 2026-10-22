@@ -37,10 +37,10 @@ function getSessionUser(req) {
   if (!token) return null;
 
   const session = database.prepare(`
-    SELECT admin_users.id, admin_users.email, admin_users.display_name
+    SELECT admin_users.id, admin_users.email, admin_users.display_name, admin_users.role, admin_users.status
     FROM admin_sessions
     JOIN admin_users ON admin_users.id = admin_sessions.user_id
-    WHERE admin_sessions.token_hash = ? AND admin_sessions.expires_at > ?
+    WHERE admin_sessions.token_hash = ? AND admin_sessions.expires_at > ? AND admin_users.status = 'active'
   `).get(hashSessionToken(token), Date.now());
 
   return session || null;
@@ -55,3 +55,12 @@ export function requireAdmin(req, res, next) {
   req.adminUser = user;
   return next();
 }
+
+export function requireAdminRole(...allowedRoles) {
+  return (req, res, next) => {
+    if (req.adminUser?.role === 'platform_owner' || allowedRoles.includes(req.adminUser?.role)) return next();
+    return res.status(403).json({ success: false, error: 'Your administrator role cannot access this section.' });
+  };
+}
+
+export const requirePlatformOwner = [requireAdmin, requireAdminRole('platform_owner')];

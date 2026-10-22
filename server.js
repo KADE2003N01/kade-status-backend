@@ -20,8 +20,11 @@ if (result.error) {
 const { default: app } = await import('./app.js');
 
 const PORT = process.env.PORT || 5000;
+// Keep local development bound to this machine. Hosted environments need to
+// accept traffic from the platform's network interface.
+const HOST = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
 
-app.listen(PORT, () => {
+app.listen(PORT, HOST, () => {
   console.log(`✅ Server running on port ${PORT}`);
   console.log(`📡 Allowed Frontend URL: ${process.env.FRONTEND_URL || 'None (using reflect origin)'}`);
   console.log(`📧 Email configured: ${process.env.EMAIL_USER || '❌ NO'}`);

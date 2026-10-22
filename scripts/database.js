@@ -20,6 +20,8 @@ export function openConfiguredDatabase({ readonly = true } = {}) {
     if (adminTable) {
       const columns = new Set(database.prepare('PRAGMA table_info(admin_users)').all().map((column) => column.name));
       if (!columns.has('phone')) database.exec('ALTER TABLE admin_users ADD COLUMN phone TEXT');
+      if (!columns.has('role')) database.exec("ALTER TABLE admin_users ADD COLUMN role TEXT NOT NULL DEFAULT 'portfolio_owner'");
+      if (!columns.has('status')) database.exec("ALTER TABLE admin_users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
     }
   }
   return database;

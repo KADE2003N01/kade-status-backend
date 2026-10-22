@@ -17,6 +17,8 @@ database.exec(`
     display_name TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     phone TEXT,
+    role TEXT NOT NULL DEFAULT 'portfolio_owner',
+    status TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -60,6 +62,15 @@ database.exec(`
     user_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
     expires_at INTEGER NOT NULL,
     created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS platform_admin_audit (
+    id INTEGER PRIMARY KEY,
+    actor_id INTEGER REFERENCES admin_users(id) ON DELETE SET NULL,
+    target_id INTEGER REFERENCES admin_users(id) ON DELETE SET NULL,
+    action TEXT NOT NULL,
+    details_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS download_email_verifications (
@@ -130,6 +141,8 @@ if (!verificationColumns.has('purpose')) database.exec("ALTER TABLE download_ema
 
 const adminColumns = new Set(database.prepare('PRAGMA table_info(admin_users)').all().map((column) => column.name));
 if (!adminColumns.has('phone')) database.exec('ALTER TABLE admin_users ADD COLUMN phone TEXT');
+if (!adminColumns.has('role')) database.exec("ALTER TABLE admin_users ADD COLUMN role TEXT NOT NULL DEFAULT 'portfolio_owner'");
+if (!adminColumns.has('status')) database.exec("ALTER TABLE admin_users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
 
 // Track the real upload date of every document (existing rows keep NULL = seeded defaults).
 const documentColumns = new Set(
@@ -195,6 +208,31 @@ if (bootstrapAdmins.length) {
 } else {
   console.warn(`Admin login is disabled because this database has no admin account: ${databasePath}`);
   console.warn(`Create one with "npm run admin:add" from ${backendDirectory}.`);
+}
+
+const configuredPlatformOwnerEmail = process.env.PLATFORM_OWNER_EMAIL?.trim().toLowerCase();
+let platformOwner = null;
+if (configuredPlatformOwnerEmail) {
+  platformOwner = database.prepare('SELECT id FROM admin_users WHERE email = ?').get(configuredPlatformOwnerEmail) || null;
+  if (!platformOwner) {
+    console.warn(`PLATFORM_OWNER_EMAIL does not match an admin account: ${configuredPlatformOwnerEmail}.`);
+  } else {
+    database.prepare("UPDATE admin_users SET status = 'active' WHERE id = ?").run(platformOwner.id);
+  }
+}
+
+platformOwner ||= database.prepare("SELECT id FROM admin_users WHERE role = 'platform_owner' AND status = 'active' ORDER BY id LIMIT 1").get() || null;
+platformOwner ||= database.prepare("SELECT id FROM admin_users WHERE role = 'platform_owner' ORDER BY id LIMIT 1").get() || null;
+platformOwner ||= database.prepare("SELECT id FROM admin_users WHERE status = 'active' ORDER BY id LIMIT 1").get() || null;
+
+if (platformOwner) {
+  database.transaction(() => {
+    database.prepare("UPDATE admin_users SET role = 'portfolio_owner' WHERE role = 'platform_owner' AND id <> ?").run(platformOwner.id);
+    database.prepare("UPDATE admin_users SET role = 'platform_owner' WHERE id = ?").run(platformOwner.id);
+    database.exec("CREATE UNIQUE INDEX IF NOT EXISTS one_platform_owner ON admin_users(role) WHERE role = 'platform_owner'");
+  })();
+} else {
+  database.exec("CREATE UNIQUE INDEX IF NOT EXISTS one_platform_owner ON admin_users(role) WHERE role = 'platform_owner'");
 }
 
 export default database;

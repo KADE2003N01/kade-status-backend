@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import database from '../../database/database.js';
 import { resolveWritableDirectory, resolveWritablePath } from '../../config/storage.js';
-import { requireAdmin } from '../../verification/admin-auth.js';
+import { requireAdmin, requireAdminRole } from '../../verification/admin-auth.js';
 
 const router = express.Router();
 const privateDocumentsDirectory = resolveWritableDirectory('private-documents');
@@ -141,7 +141,7 @@ router.get('/', (req, res, next) => {
   }
 });
 
-router.post('/cv', requireAdmin, async (req, res, next) => {
+router.post('/cv', requireAdmin, requireAdminRole('portfolio_owner', 'document_manager'), async (req, res, next) => {
   let storedFilename;
   try {
     const metadata = parseCvMetadata(req.body);
@@ -171,7 +171,7 @@ router.post('/cv', requireAdmin, async (req, res, next) => {
   }
 });
 
-router.post('/certificates', requireAdmin, async (req, res, next) => {
+router.post('/certificates', requireAdmin, requireAdminRole('portfolio_owner', 'document_manager'), async (req, res, next) => {
   let storedFilename;
   try {
     const metadata = parseMetadata(req.body);
@@ -202,7 +202,7 @@ router.post('/certificates', requireAdmin, async (req, res, next) => {
   }
 });
 
-router.put('/certificates/:documentId', requireAdmin, async (req, res, next) => {
+router.put('/certificates/:documentId', requireAdmin, requireAdminRole('portfolio_owner', 'document_manager'), async (req, res, next) => {
   let storedFilename;
   try {
     const existing = database.prepare(`
@@ -254,7 +254,7 @@ router.put('/certificates/:documentId', requireAdmin, async (req, res, next) => 
   }
 });
 
-router.delete('/:documentId', requireAdmin, async (req, res, next) => {
+router.delete('/:documentId', requireAdmin, requireAdminRole('portfolio_owner', 'document_manager'), async (req, res, next) => {
   try {
     const existing = database.prepare(`
       SELECT document_id, stored_filename FROM portfolio_documents WHERE document_id = ?
