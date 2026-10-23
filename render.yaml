@@ -9,4 +9,4 @@ services:
       - key: NODE_ENV
         value: production
       - key: FRONTEND_URL
-        value: https://david-portifolio.onrender.com
+        value: https://my-digital-status.onrender.com

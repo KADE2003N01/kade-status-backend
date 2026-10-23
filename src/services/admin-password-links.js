@@ -19,7 +19,7 @@ export async function sendAdminPasswordLink(user, { setup = false, force = false
   database.prepare('INSERT INTO admin_password_resets (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)')
     .run(createHash('sha256').update(token).digest('hex'), user.id, now + PASSWORD_RESET_DURATION_MS, now);
   const frontendUrl = (process.env.FRONTEND_URL || (process.env.NODE_ENV === 'production'
-    ? 'https://david-portifolio.onrender.com'
+    ? 'https://my-digital-status.onrender.com'
     : 'http://localhost:5173')).split(',')[0].trim().replace(/\/$/, '');
   const link = `${frontendUrl}/admin-reset-password.html?token=${encodeURIComponent(token)}`;
   const greetingName = String(user.display_name || 'Administrator').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
