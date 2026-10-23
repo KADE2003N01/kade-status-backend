@@ -251,7 +251,11 @@ The frontend build writes static assets to `kade-status-frontend/dist`. Its Vite
 
 ### Current Render layout
 
-The frontend `render.yaml` defines a static site and rewrites `/api/*` to the backend service URL. Deploy the frontend and backend as separate services. The backend needs its own environment variables and persistent disk; a frontend deploy does not deploy backend code or migrate its SQLite file.
+The frontend and backend can stay in separate GitHub repositories and Render services. The frontend repository's `render.yaml` builds the static site and rewrites `/api/*` to `https://kade-status-backend-e1th.onrender.com/api/*`. This backend repository's `render.yaml` builds and starts the API and checks `/api/health`.
+
+For the backend Render Web Service, connect the backend repository, leave **Root Directory** blank when its root contains this `package.json`, use `npm ci` as the build command, and `npm start` as the start command. `nodemailer` is a production dependency in both `package.json` and `package-lock.json`, so `npm ci` from this folder installs it. If the runtime log still says Nodemailer is missing, inspect the latest **build** log and confirm it ran `npm ci` in this repository and branch; then redeploy with a cleared build cache.
+
+Set production environment variables in the backend service's Render dashboard, not in GitHub. At minimum, set `FRONTEND_URL` to the exact deployed frontend origin. Add `EMAIL_USER` and a Gmail App Password as `EMAIL_PASSWORD` for account recovery and verification email; add contact-specific settings if the contact form uses another mailbox. Missing email settings do not prevent the API from starting, but email features will return a configuration error until they are set. Keep the backend's persistent disk and its `STORAGE_DIR`/`DATABASE_PATH` settings configured separately so deploys preserve uploaded files and database data.
 
 The backend allows the known production frontend origin plus local development origins. Set `FRONTEND_URL` when using another frontend domain. Keep `FRONTEND_URL` exact and comma-separated; do not use `*` for authenticated requests.
 
