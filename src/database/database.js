@@ -73,6 +73,40 @@ database.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
+  CREATE TABLE IF NOT EXISTS admin_support_requests (
+    id INTEGER PRIMARY KEY,
+    admin_user_id INTEGER REFERENCES admin_users(id) ON DELETE SET NULL,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    category TEXT NOT NULL,
+    message TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS platform_message_threads (
+    id INTEGER PRIMARY KEY,
+    admin_user_id INTEGER NOT NULL UNIQUE REFERENCES admin_users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS platform_messages (
+    id INTEGER PRIMARY KEY,
+    thread_id INTEGER NOT NULL REFERENCES platform_message_threads(id) ON DELETE CASCADE,
+    sender_id INTEGER REFERENCES admin_users(id) ON DELETE SET NULL,
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS platform_message_reads (
+    message_id INTEGER NOT NULL REFERENCES platform_messages(id) ON DELETE CASCADE,
+    reader_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    read_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (message_id, reader_id)
+  );
+
   CREATE TABLE IF NOT EXISTS download_email_verifications (
     challenge_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -143,6 +177,17 @@ const adminColumns = new Set(database.prepare('PRAGMA table_info(admin_users)').
 if (!adminColumns.has('phone')) database.exec('ALTER TABLE admin_users ADD COLUMN phone TEXT');
 if (!adminColumns.has('role')) database.exec("ALTER TABLE admin_users ADD COLUMN role TEXT NOT NULL DEFAULT 'portfolio_owner'");
 if (!adminColumns.has('status')) database.exec("ALTER TABLE admin_users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
+if (!adminColumns.has('roles_json')) database.exec("ALTER TABLE admin_users ADD COLUMN roles_json TEXT NOT NULL DEFAULT '[]'");
+for (const admin of database.prepare('SELECT id, role, roles_json FROM admin_users').all()) {
+  let roles;
+  try { roles = JSON.parse(admin.roles_json || '[]'); } catch { roles = []; }
+  if (!Array.isArray(roles) || !roles.length) roles = [admin.role || 'portfolio_owner'];
+  if (admin.role === 'platform_owner' && !roles.includes('platform_owner')) roles.unshift('platform_owner');
+  roles = [...new Set(roles.filter((role) => typeof role === 'string'))];
+  database.prepare('UPDATE admin_users SET roles_json = ?, role = ? WHERE id = ?')
+    .run(JSON.stringify(roles), roles.includes('platform_owner') ? 'platform_owner' : roles[0], admin.id);
+}
+database.exec('DROP INDEX IF EXISTS one_platform_owner');
 
 // Track the real upload date of every document (existing rows keep NULL = seeded defaults).
 const documentColumns = new Set(
@@ -211,28 +256,16 @@ if (bootstrapAdmins.length) {
 }
 
 const configuredPlatformOwnerEmail = process.env.PLATFORM_OWNER_EMAIL?.trim().toLowerCase();
-let platformOwner = null;
 if (configuredPlatformOwnerEmail) {
-  platformOwner = database.prepare('SELECT id FROM admin_users WHERE email = ?').get(configuredPlatformOwnerEmail) || null;
+  const platformOwner = database.prepare('SELECT id, roles_json FROM admin_users WHERE email = ?').get(configuredPlatformOwnerEmail) || null;
   if (!platformOwner) {
     console.warn(`PLATFORM_OWNER_EMAIL does not match an admin account: ${configuredPlatformOwnerEmail}.`);
   } else {
-    database.prepare("UPDATE admin_users SET status = 'active' WHERE id = ?").run(platformOwner.id);
+    const roles = JSON.parse(platformOwner.roles_json || '[]');
+    if (!roles.includes('platform_owner')) roles.push('platform_owner');
+    database.prepare("UPDATE admin_users SET role = 'platform_owner', roles_json = ?, status = 'active' WHERE id = ?")
+      .run(JSON.stringify(roles), platformOwner.id);
   }
-}
-
-platformOwner ||= database.prepare("SELECT id FROM admin_users WHERE role = 'platform_owner' AND status = 'active' ORDER BY id LIMIT 1").get() || null;
-platformOwner ||= database.prepare("SELECT id FROM admin_users WHERE role = 'platform_owner' ORDER BY id LIMIT 1").get() || null;
-platformOwner ||= database.prepare("SELECT id FROM admin_users WHERE status = 'active' ORDER BY id LIMIT 1").get() || null;
-
-if (platformOwner) {
-  database.transaction(() => {
-    database.prepare("UPDATE admin_users SET role = 'portfolio_owner' WHERE role = 'platform_owner' AND id <> ?").run(platformOwner.id);
-    database.prepare("UPDATE admin_users SET role = 'platform_owner' WHERE id = ?").run(platformOwner.id);
-    database.exec("CREATE UNIQUE INDEX IF NOT EXISTS one_platform_owner ON admin_users(role) WHERE role = 'platform_owner'");
-  })();
-} else {
-  database.exec("CREATE UNIQUE INDEX IF NOT EXISTS one_platform_owner ON admin_users(role) WHERE role = 'platform_owner'");
 }
 
 export default database;
