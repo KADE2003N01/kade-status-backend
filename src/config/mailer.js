@@ -1,4 +1,4 @@
-import nodemailer from 'nodemailer';
+import nodemailer from "nodemailer/dist/esm/nodemailer.js";
 
 export const getTransporter = (purpose = 'otp') => {
   const isContact = purpose === 'contact';
