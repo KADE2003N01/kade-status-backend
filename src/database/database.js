@@ -192,6 +192,25 @@ database.exec('DROP INDEX IF EXISTS one_platform_owner');
 
 const messageThreadColumns = new Set(database.prepare('PRAGMA table_info(platform_message_threads)').all().map((column) => column.name));
 if (!messageThreadColumns.has('reply_allowed')) database.exec('ALTER TABLE platform_message_threads ADD COLUMN reply_allowed INTEGER NOT NULL DEFAULT 1');
+const platformMessageColumns = new Set(database.prepare('PRAGMA table_info(platform_messages)').all().map((column) => column.name));
+if (!platformMessageColumns.has('deleted_at')) database.exec('ALTER TABLE platform_messages ADD COLUMN deleted_at TEXT');
+if (!platformMessageColumns.has('edited_at')) database.exec('ALTER TABLE platform_messages ADD COLUMN edited_at TEXT');
+if (!platformMessageColumns.has('message_group_id')) database.exec('ALTER TABLE platform_messages ADD COLUMN message_group_id TEXT');
+if (!platformMessageColumns.has('message_group_label')) database.exec('ALTER TABLE platform_messages ADD COLUMN message_group_label TEXT');
+if (!platformMessageColumns.has('reply_allowed')) database.exec('ALTER TABLE platform_messages ADD COLUMN reply_allowed INTEGER NOT NULL DEFAULT 1');
+if (!platformMessageColumns.has('reply_to_message_id')) database.exec('ALTER TABLE platform_messages ADD COLUMN reply_to_message_id INTEGER REFERENCES platform_messages(id) ON DELETE SET NULL');
+database.exec(`CREATE TABLE IF NOT EXISTS platform_message_attachments (
+  id TEXT PRIMARY KEY,
+  uploaded_by_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+  message_id INTEGER REFERENCES platform_messages(id) ON DELETE CASCADE,
+  message_group_id TEXT,
+  original_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  stored_name TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+)`);
+database.exec('CREATE INDEX IF NOT EXISTS idx_platform_message_attachments_group ON platform_message_attachments(message_group_id)');
 
 // Track the real upload date of every document (existing rows keep NULL = seeded defaults).
 const documentColumns = new Set(

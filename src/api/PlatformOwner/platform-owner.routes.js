@@ -69,13 +69,20 @@ router.get('/audit', (req, res) => {
 
 router.get('/inbox-counts', (req, res) => {
   const requests = database.prepare("SELECT COUNT(*) AS count FROM admin_support_requests WHERE status = 'open'").get().count;
-  const messages = database.prepare(`SELECT COUNT(*) AS count FROM platform_messages message
+  const incoming = database.prepare(`SELECT COUNT(*) AS count FROM platform_messages message
+    JOIN platform_message_threads thread ON thread.id = message.thread_id
+    JOIN admin_users sender ON sender.id = message.sender_id
+    WHERE sender.role <> 'platform_owner'`).get().count;
+  const outgoing = database.prepare(`SELECT COUNT(*) AS count
+    FROM platform_messages message JOIN admin_users sender ON sender.id = message.sender_id
+    WHERE sender.role = 'platform_owner'`).get().count;
+  const unreadMessages = database.prepare(`SELECT COUNT(*) AS count FROM platform_messages message
     JOIN platform_message_threads thread ON thread.id = message.thread_id
     JOIN admin_users sender ON sender.id = message.sender_id
     WHERE sender.role <> 'platform_owner' AND NOT EXISTS (
       SELECT 1 FROM platform_message_reads state WHERE state.message_id = message.id AND state.reader_id = ?
     )`).get(req.adminUser.id).count;
-  return res.json({ success: true, requests, messages });
+  return res.json({ success: true, requests, messages: unreadMessages, messagesIncoming: incoming, messagesOutgoing: outgoing });
 });
 
 router.get('/support-requests', (req, res) => {
