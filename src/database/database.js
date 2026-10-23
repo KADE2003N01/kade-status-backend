@@ -88,6 +88,7 @@ database.exec(`
   CREATE TABLE IF NOT EXISTS platform_message_threads (
     id INTEGER PRIMARY KEY,
     admin_user_id INTEGER NOT NULL UNIQUE REFERENCES admin_users(id) ON DELETE CASCADE,
+    reply_allowed INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
@@ -188,6 +189,9 @@ for (const admin of database.prepare('SELECT id, role, roles_json FROM admin_use
     .run(JSON.stringify(roles), roles.includes('platform_owner') ? 'platform_owner' : roles[0], admin.id);
 }
 database.exec('DROP INDEX IF EXISTS one_platform_owner');
+
+const messageThreadColumns = new Set(database.prepare('PRAGMA table_info(platform_message_threads)').all().map((column) => column.name));
+if (!messageThreadColumns.has('reply_allowed')) database.exec('ALTER TABLE platform_message_threads ADD COLUMN reply_allowed INTEGER NOT NULL DEFAULT 1');
 
 // Track the real upload date of every document (existing rows keep NULL = seeded defaults).
 const documentColumns = new Set(

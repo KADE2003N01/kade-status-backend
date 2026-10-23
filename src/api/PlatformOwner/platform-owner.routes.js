@@ -143,6 +143,82 @@ router.post('/admins', async (req, res, next) => {
   }
 });
 
+router.post('/admins/bulk-action', async (req, res, next) => {
+  const action = typeof req.body?.action === 'string' ? req.body.action : '';
+  if (!['delete_all', 'activate_all', 'deactivate_all', 'reset_passwords', 'assign_roles_all'].includes(action)) {
+    return res.status(400).json({ success: false, error: 'Choose a valid bulk administrator action.' });
+  }
+
+  try {
+    const targets = database.prepare("SELECT id, email, display_name, status FROM admin_users WHERE role <> 'platform_owner' ORDER BY id").all();
+    if (action === 'assign_roles_all') {
+      const roles = [...new Set(Array.isArray(req.body?.roles) ? req.body.roles : [])];
+      if (!roles.length || roles.some((role) => !ADMIN_ROLES.has(role))) {
+        return res.status(400).json({ success: false, error: 'Choose at least one valid role to assign.' });
+      }
+      const primaryRole = roles.includes('platform_owner') ? 'platform_owner' : roles[0];
+      const changed = database.transaction(() => {
+        const update = database.prepare("UPDATE admin_users SET role = ?, roles_json = ? WHERE role <> 'platform_owner'");
+        const result = update.run(primaryRole, JSON.stringify(roles));
+        database.prepare('INSERT INTO platform_admin_audit (actor_id, action, details_json) VALUES (?, ?, ?)')
+          .run(req.adminUser.id, 'admins_bulk_roles_changed', JSON.stringify({ count: result.changes, roles }));
+        return result.changes;
+      })();
+      return res.json({ success: true, affected: changed, skipped: 0, roles, message: `Roles assigned to ${changed} customer admin account${changed === 1 ? '' : 's'}. Super-admin accounts were not changed.` });
+    }
+    if (action === 'delete_all') {
+      const result = database.transaction(() => {
+        database.prepare('INSERT INTO platform_admin_audit (actor_id, action, details_json) VALUES (?, ?, ?)')
+          .run(req.adminUser.id, 'admins_bulk_deleted', JSON.stringify({ count: targets.length }));
+        database.prepare("DELETE FROM admin_users WHERE role <> 'platform_owner'").run();
+        return targets.length;
+      })();
+      return res.json({ success: true, affected: result, skipped: 0, message: `${result} customer admin account${result === 1 ? '' : 's'} deleted. Super-admin accounts were protected.` });
+    }
+
+    if (action === 'activate_all' || action === 'deactivate_all') {
+      const nextStatus = action === 'activate_all' ? 'active' : 'inactive';
+      const fromStatus = action === 'activate_all' ? 'inactive' : 'active';
+      const result = database.transaction(() => {
+        const changed = database.prepare("UPDATE admin_users SET status = ? WHERE role <> 'platform_owner' AND status = ?").run(nextStatus, fromStatus);
+        if (action === 'deactivate_all') {
+          database.prepare("DELETE FROM admin_sessions WHERE user_id IN (SELECT id FROM admin_users WHERE role <> 'platform_owner' AND status = 'inactive')").run();
+          database.prepare("DELETE FROM admin_password_resets WHERE user_id IN (SELECT id FROM admin_users WHERE role <> 'platform_owner' AND status = 'inactive')").run();
+        }
+        database.prepare('INSERT INTO platform_admin_audit (actor_id, action, details_json) VALUES (?, ?, ?)')
+          .run(req.adminUser.id, action === 'activate_all' ? 'admins_bulk_activated' : 'admins_bulk_deactivated', JSON.stringify({ count: changed.changes }));
+        return changed.changes;
+      })();
+      const skipped = targets.length - result;
+      return res.json({ success: true, affected: result, skipped, message: `${result} customer admin account${result === 1 ? '' : 's'} ${nextStatus === 'active' ? 'activated' : 'deactivated'}; ${skipped} unchanged. Pending invitations and super-admin accounts were protected.` });
+    }
+
+    const eligible = targets.filter((admin) => ['active', 'pending'].includes(admin.status));
+    let sent = 0;
+    const failures = [];
+    for (const admin of eligible) {
+      try {
+        await sendAdminPasswordLink(admin, { setup: admin.status === 'pending', force: true });
+        sent += 1;
+      } catch (mailError) {
+        failures.push({ id: admin.id, email: admin.email, reason: typeof mailError.code === 'string' ? mailError.code.slice(0, 80) : 'delivery_failed' });
+      }
+    }
+    database.prepare('INSERT INTO platform_admin_audit (actor_id, action, details_json) VALUES (?, ?, ?)')
+      .run(req.adminUser.id, 'admins_bulk_password_links_sent', JSON.stringify({ sent, failed: failures.length, skipped: targets.length - eligible.length, failures }));
+    const skipped = targets.length - eligible.length;
+    return res.json({
+      success: true,
+      affected: sent,
+      skipped,
+      failed: failures.length,
+      message: `Password or setup links sent to ${sent} admin${sent === 1 ? '' : 's'}; ${failures.length} failed and ${skipped} inactive or super-admin account${skipped === 1 ? '' : 's'} skipped.`
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 router.patch('/admins/:adminId/role', (req, res) => {
   const id = Number(req.params.adminId);
   const role = typeof req.body?.role === 'string' ? req.body.role : '';
