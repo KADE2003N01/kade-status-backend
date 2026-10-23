@@ -1,4 +1,9 @@
-import nodemailer from "nodemailer";
+import { createRequire } from 'node:module';
+
+// Load Nodemailer's CommonJS entry explicitly. This avoids a Render startup
+// crash when its installed package is missing the ESM export file.
+const require = createRequire(import.meta.url);
+const nodemailer = require('nodemailer');
 
 export const getTransporter = (purpose = 'otp') => {
   const isContact = purpose === 'contact';
