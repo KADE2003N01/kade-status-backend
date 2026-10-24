@@ -6,9 +6,11 @@ import path from 'node:path';
 import database from '../../database/database.js';
 import { resolveWritablePath } from '../../config/storage.js';
 import { requireAdmin } from '../../verification/admin-auth.js';
+import visitorMessagesRouter from './visitor-messages.routes.js';
 
 const router = express.Router();
 router.use(requireAdmin);
+router.use('/visitors', visitorMessagesRouter);
 const MESSAGE_FILE_LIMIT = 50 * 1024 * 1024;
 const MESSAGE_TOTAL_ATTACHMENT_LIMIT = 100 * 1024 * 1024;
 const attachmentTypes = {
@@ -182,20 +184,32 @@ function unreadCount(user) {
     FROM platform_messages message
     JOIN platform_message_threads thread ON thread.id = message.thread_id
     JOIN admin_users sender ON sender.id = message.sender_id
-    WHERE ${owner ? "sender.role <> 'platform_owner'" : "sender.role = 'platform_owner' AND thread.admin_user_id = ?"}
-      AND NOT EXISTS (SELECT 1 FROM platform_message_reads read_state WHERE read_state.message_id = message.id AND read_state.reader_id = ?)`)
-    .get(...(owner ? [user.id] : [user.id, user.id])).count;
+    WHERE message.deleted_at IS NULL AND ${owner ? "sender.role <> 'platform_owner'" : "sender.role = 'platform_owner' AND thread.admin_user_id = ?"}
+      AND NOT EXISTS (SELECT 1 FROM platform_message_reads read_state WHERE read_state.message_id = message.id AND read_state.reader_id = ?)
+      AND NOT EXISTS (SELECT 1 FROM platform_message_hidden hidden WHERE hidden.message_id = message.id AND hidden.admin_user_id = ?)
+      AND NOT EXISTS (SELECT 1 FROM platform_message_permanent_hidden hidden WHERE hidden.message_id = message.id AND hidden.admin_user_id = ?)`)
+    .get(...(owner ? [user.id, user.id, user.id] : [user.id, user.id, user.id, user.id])).count;
 }
 
-router.get('/unread-count', (req, res) => res.json({ success: true, count: unreadCount(req.adminUser) }));
+router.get('/unread-count', (req, res) => {
+  const visitorCount = isPlatformOwner(req.adminUser) ? 0 : database.prepare("SELECT COUNT(*) AS count FROM contact_messages WHERE status = 'new' AND deleted_at IS NULL").get().count;
+  return res.json({ success: true, count: unreadCount(req.adminUser) + visitorCount, visitorCount });
+});
+
+router.get('/super-admins', (req, res) => {
+  const admins = database.prepare(`SELECT id, display_name AS displayName, email FROM admin_users
+    WHERE role = 'platform_owner' AND status = 'active' ORDER BY display_name COLLATE NOCASE, id`).all();
+  return res.json({ success: true, admins });
+});
 
 router.get('/', (req, res) => {
   const owner = isPlatformOwner(req.adminUser);
   const threads = owner
     ? database.prepare(`SELECT thread.id, thread.admin_user_id AS adminId, admin.display_name AS adminName, admin.email AS adminEmail,
-        admin.status AS adminStatus, admin.roles_json AS adminRolesJson, thread.reply_allowed AS replyAllowed, thread.updated_at AS updatedAt
+        admin.status AS adminStatus, admin.roles_json AS adminRolesJson, thread.reply_allowed AS replyAllowed, thread.updated_at AS updatedAt,
+        (SELECT MAX(message.created_at) FROM platform_messages message WHERE message.thread_id = thread.id) AS latestMessageAt
         FROM admin_users admin LEFT JOIN platform_message_threads thread ON thread.admin_user_id = admin.id
-        WHERE admin.role <> 'platform_owner' ORDER BY COALESCE(thread.updated_at, admin.created_at) DESC`)
+        WHERE admin.role <> 'platform_owner' ORDER BY COALESCE((SELECT MAX(message.created_at) FROM platform_messages message WHERE message.thread_id = thread.id), thread.updated_at, admin.created_at) DESC, admin.id DESC`)
       .all().map((thread) => {
         let roles = [];
         try { roles = JSON.parse(thread.adminRolesJson || '[]'); } catch { roles = []; }
@@ -203,7 +217,8 @@ router.get('/', (req, res) => {
         return { ...thread, adminRoles: Array.isArray(roles) && roles.length ? roles : ['portfolio_owner'], replyAllowed: thread.id ? Boolean(thread.replyAllowed) : true };
       })
     : database.prepare(`SELECT thread.id, thread.admin_user_id AS adminId, admin.display_name AS adminName, admin.email AS adminEmail,
-        admin.status AS adminStatus, admin.roles_json AS adminRolesJson, thread.reply_allowed AS replyAllowed, thread.updated_at AS updatedAt
+        admin.status AS adminStatus, admin.roles_json AS adminRolesJson, thread.reply_allowed AS replyAllowed, thread.updated_at AS updatedAt,
+        (SELECT MAX(message.created_at) FROM platform_messages message WHERE message.thread_id = thread.id) AS latestMessageAt
         FROM admin_users admin LEFT JOIN platform_message_threads thread ON thread.admin_user_id = admin.id
         WHERE admin.id = ?`).all(req.adminUser.id).map((thread) => {
         let roles = [];
@@ -214,24 +229,37 @@ router.get('/', (req, res) => {
 
   const rows = owner
     ? database.prepare(`SELECT message.id, message.thread_id AS threadId, message.sender_id AS senderId, sender.display_name AS senderName,
-        sender.email AS senderEmail, sender.role AS senderRole, message.body, message.created_at AS createdAt, message.deleted_at AS deletedAt, message.edited_at AS editedAt, message.message_group_id AS messageGroupId, message.message_group_label AS messageGroupLabel, message.reply_allowed AS replyAllowed, message.reply_to_message_id AS replyToMessageId,
-        EXISTS (SELECT 1 FROM platform_message_reads state WHERE state.message_id = message.id AND state.reader_id = ?) AS isRead
+        sender.email AS senderEmail, sender.role AS senderRole, owner.display_name AS recipientOwnerName, message.recipient_owner_id AS recipientOwnerId, message.body, message.created_at AS createdAt, message.deleted_at AS deletedAt, message.edited_at AS editedAt, message.message_group_id AS messageGroupId, message.message_group_label AS messageGroupLabel, message.reply_allowed AS replyAllowed, message.reply_to_message_id AS replyToMessageId,
+        EXISTS (SELECT 1 FROM platform_message_reads state WHERE state.message_id = message.id AND state.reader_id = ?) AS isRead,
+        0 AS isHidden
         FROM platform_messages message JOIN platform_message_threads thread ON thread.id = message.thread_id
-        LEFT JOIN admin_users sender ON sender.id = message.sender_id ORDER BY message.created_at, message.id`).all(req.adminUser.id)
+        LEFT JOIN admin_users sender ON sender.id = message.sender_id LEFT JOIN admin_users owner ON owner.id = message.recipient_owner_id ORDER BY message.created_at, message.id`).all(req.adminUser.id)
     : database.prepare(`SELECT message.id, message.thread_id AS threadId, message.sender_id AS senderId, sender.display_name AS senderName,
-        sender.email AS senderEmail, sender.role AS senderRole, message.body, message.created_at AS createdAt, message.deleted_at AS deletedAt, message.edited_at AS editedAt, message.message_group_id AS messageGroupId, message.message_group_label AS messageGroupLabel, message.reply_allowed AS replyAllowed, message.reply_to_message_id AS replyToMessageId,
-        EXISTS (SELECT 1 FROM platform_message_reads state WHERE state.message_id = message.id AND state.reader_id = ?) AS isRead
+        sender.email AS senderEmail, sender.role AS senderRole, owner.display_name AS recipientOwnerName, message.recipient_owner_id AS recipientOwnerId, message.body, message.created_at AS createdAt, message.deleted_at AS deletedAt, message.edited_at AS editedAt, message.message_group_id AS messageGroupId, message.message_group_label AS messageGroupLabel, message.reply_allowed AS replyAllowed, message.reply_to_message_id AS replyToMessageId,
+        EXISTS (SELECT 1 FROM platform_message_reads state WHERE state.message_id = message.id AND state.reader_id = ?) AS isRead,
+        EXISTS (SELECT 1 FROM platform_message_hidden hidden WHERE hidden.message_id = message.id AND hidden.admin_user_id = ?) AS isHidden
         FROM platform_messages message JOIN platform_message_threads thread ON thread.id = message.thread_id
-        LEFT JOIN admin_users sender ON sender.id = message.sender_id WHERE thread.admin_user_id = ? ORDER BY message.created_at, message.id`)
-      .all(req.adminUser.id, req.adminUser.id);
+        LEFT JOIN admin_users sender ON sender.id = message.sender_id LEFT JOIN admin_users owner ON owner.id = message.recipient_owner_id WHERE thread.admin_user_id = ?
+          AND NOT EXISTS (SELECT 1 FROM platform_message_permanent_hidden hidden WHERE hidden.message_id = message.id AND hidden.admin_user_id = ?) ORDER BY message.created_at, message.id`)
+      .all(req.adminUser.id, req.adminUser.id, req.adminUser.id, req.adminUser.id);
 
-  const ownerIncoming = owner ? "sender.role <> 'platform_owner'" : "sender.role = 'platform_owner'";
-  database.prepare(`INSERT OR IGNORE INTO platform_message_reads (message_id, reader_id)
-    SELECT message.id, ? FROM platform_messages message JOIN platform_message_threads thread ON thread.id = message.thread_id
-    JOIN admin_users sender ON sender.id = message.sender_id
-    WHERE ${ownerIncoming} ${owner ? '' : 'AND thread.admin_user_id = ?'}`)
-    .run(...(owner ? [req.adminUser.id] : [req.adminUser.id, req.adminUser.id]));
   return res.json({ success: true, threads, messages: attachmentRowsForMessages(rows), unreadCount: unreadCount(req.adminUser) });
+});
+
+router.post('/threads/:threadId/read', (req, res) => {
+  const threadId = Number(req.params.threadId);
+  if (!Number.isSafeInteger(threadId) || threadId < 1) return res.status(400).json({ success: false, error: 'Choose a valid conversation.' });
+  const thread = database.prepare('SELECT id, admin_user_id AS adminId FROM platform_message_threads WHERE id = ?').get(threadId);
+  if (!thread || (!isPlatformOwner(req.adminUser) && Number(thread.adminId) !== Number(req.adminUser.id))) {
+    return res.status(404).json({ success: false, error: 'Conversation not found.' });
+  }
+  const incoming = isPlatformOwner(req.adminUser) ? "sender.role <> 'platform_owner'" : "sender.role = 'platform_owner'";
+  database.prepare(`INSERT OR IGNORE INTO platform_message_reads (message_id, reader_id)
+    SELECT message.id, ? FROM platform_messages message JOIN admin_users sender ON sender.id = message.sender_id
+    WHERE message.thread_id = ? AND message.deleted_at IS NULL AND ${incoming}
+      AND NOT EXISTS (SELECT 1 FROM platform_message_permanent_hidden hidden WHERE hidden.message_id = message.id AND hidden.admin_user_id = ?)`)
+    .run(req.adminUser.id, threadId, req.adminUser.id);
+  return res.json({ success: true, unreadCount: unreadCount(req.adminUser) });
 });
 
 router.patch('/threads/replies/bulk', (req, res) => {
@@ -268,11 +296,18 @@ router.patch('/threads/:threadId/replies', (req, res) => {
 });
 
 router.patch('/:messageId', (req, res) => {
-  if (!isPlatformOwner(req.adminUser)) return res.status(403).json({ success: false, error: 'Only a super-admin can edit sent messages.' });
   const messageId = Number(req.params.messageId);
   const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
   if (!Number.isSafeInteger(messageId) || messageId < 1) return res.status(400).json({ success: false, error: 'Choose a valid message.' });
   if (body.length < 1 || body.length > 3000) return res.status(400).json({ success: false, error: 'Message must be between 1 and 3,000 characters.' });
+  if (!isPlatformOwner(req.adminUser)) {
+    const result = database.prepare(`UPDATE platform_messages SET body = ?, edited_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND sender_id = ? AND message_group_id IS NULL AND deleted_at IS NULL
+        AND EXISTS (SELECT 1 FROM platform_message_threads thread WHERE thread.id = platform_messages.thread_id AND thread.admin_user_id = ?)`)
+      .run(body, messageId, req.adminUser.id, req.adminUser.id);
+    if (!result.changes) return res.status(404).json({ success: false, error: 'Your sent message could not be found.' });
+    return res.json({ success: true, message: { id: messageId, body } });
+  }
   const result = database.transaction(() => {
     const message = database.prepare(`SELECT id, body, created_at AS createdAt, message_group_id AS messageGroupId FROM platform_messages WHERE id = ? AND sender_id = ?
       AND EXISTS (SELECT 1 FROM admin_users sender WHERE sender.id = platform_messages.sender_id AND sender.role = 'platform_owner')`)
@@ -331,9 +366,33 @@ router.delete('/:messageId/clear-permanent', async (req, res) => {
 });
 
 router.delete('/:messageId', (req, res) => {
-  if (!isPlatformOwner(req.adminUser)) return res.status(403).json({ success: false, error: 'Only a super-admin can delete sent messages.' });
   const messageId = Number(req.params.messageId);
   if (!Number.isSafeInteger(messageId) || messageId < 1) return res.status(400).json({ success: false, error: 'Choose a valid message.' });
+  if (!isPlatformOwner(req.adminUser)) {
+    const result = database.prepare(`UPDATE platform_messages SET deleted_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND sender_id = ? AND message_group_id IS NULL AND deleted_at IS NULL
+        AND EXISTS (SELECT 1 FROM platform_message_threads thread WHERE thread.id = platform_messages.thread_id AND thread.admin_user_id = ?)`)
+      .run(messageId, req.adminUser.id, req.adminUser.id);
+    if (result.changes) return res.json({ success: true, message: 'Sent message cleared.' });
+    const incoming = database.prepare(`SELECT message.id, message.reply_allowed AS replyAllowed, thread.reply_allowed AS threadReplyAllowed FROM platform_messages message
+      JOIN platform_message_threads thread ON thread.id = message.thread_id
+      JOIN admin_users sender ON sender.id = message.sender_id
+      WHERE message.id = ? AND thread.admin_user_id = ? AND sender.role = 'platform_owner'
+        AND message.deleted_at IS NULL`)
+      .get(messageId, req.adminUser.id);
+    if (!incoming) return res.status(404).json({ success: false, error: 'This message cannot be removed from your inbox.' });
+    const alreadyHidden = database.prepare('SELECT 1 FROM platform_message_hidden WHERE message_id = ? AND admin_user_id = ?').get(messageId, req.adminUser.id);
+    if (alreadyHidden) {
+      database.prepare('INSERT OR IGNORE INTO platform_message_permanent_hidden (message_id, admin_user_id) VALUES (?, ?)').run(messageId, req.adminUser.id);
+      return res.json({ success: true, permanentlyDeleted: true, message: 'Message permanently removed from your inbox.' });
+    }
+    const repliesDisabled = !incoming.replyAllowed || !incoming.threadReplyAllowed;
+    if (repliesDisabled && req.body?.confirmation !== 'DELETE') {
+      return res.status(400).json({ success: false, code: 'CONFIRMATION_REQUIRED', error: 'Type DELETE to remove this message.' });
+    }
+    database.prepare('INSERT OR IGNORE INTO platform_message_hidden (message_id, admin_user_id) VALUES (?, ?)').run(messageId, req.adminUser.id);
+    return res.json({ success: true, cleared: true, message: 'Message cleared from your inbox.' });
+  }
   const result = database.transaction(() => {
     const message = database.prepare(`SELECT id, message_group_id AS messageGroupId FROM platform_messages WHERE id = ? AND sender_id = ?
       AND EXISTS (SELECT 1 FROM admin_users sender WHERE sender.id = platform_messages.sender_id AND sender.role = 'platform_owner')`)
@@ -365,6 +424,12 @@ router.post('/', (req, res) => {
   if (!owner) {
     const thread = ensureThread(req.adminUser.id);
     if (!thread.replyAllowed) return res.status(403).json({ success: false, code: 'REPLIES_DISABLED', error: 'Replies are currently disabled for this conversation.' });
+    const selectedOwnerId = req.body?.recipientOwnerId === undefined ? null : Number(req.body.recipientOwnerId);
+    if (selectedOwnerId !== null && (!Number.isSafeInteger(selectedOwnerId) || selectedOwnerId < 1)) return res.status(400).json({ success: false, error: 'Choose a valid super-admin contact.' });
+    const recipientOwner = selectedOwnerId === null
+      ? database.prepare("SELECT id, display_name AS displayName FROM admin_users WHERE role = 'platform_owner' AND status = 'active' ORDER BY id LIMIT 1").get()
+      : database.prepare("SELECT id, display_name AS displayName FROM admin_users WHERE id = ? AND role = 'platform_owner' AND status = 'active'").get(selectedOwnerId);
+    if (!recipientOwner) return res.status(409).json({ success: false, error: 'There is no active super-admin available to contact.' });
     const requestedReplyId = req.body?.replyToMessageId === undefined || req.body?.replyToMessageId === null ? null : Number(req.body.replyToMessageId);
     let replyTarget = null;
     if (requestedReplyId !== null) {
@@ -373,22 +438,17 @@ router.post('/', (req, res) => {
         JOIN admin_users sender ON sender.id = message.sender_id
         WHERE message.id = ? AND message.thread_id = ? AND sender.role = 'platform_owner' AND message.deleted_at IS NULL`).get(requestedReplyId, thread.id);
       if (!replyTarget) return res.status(404).json({ success: false, error: 'The selected message is no longer available to reply to.' });
-    } else {
-      replyTarget = database.prepare(`SELECT message.id, message.reply_allowed AS replyAllowed FROM platform_messages message
-        JOIN admin_users sender ON sender.id = message.sender_id
-        WHERE message.thread_id = ? AND sender.role = 'platform_owner' AND message.deleted_at IS NULL
-        ORDER BY message.created_at DESC, message.id DESC LIMIT 1`).get(thread.id);
     }
     if (replyTarget && !replyTarget.replyAllowed) {
       return res.status(403).json({ success: false, code: 'MESSAGE_REPLIES_DISABLED', error: 'Replies are not allowed to this message.' });
     }
-    const result = database.prepare('INSERT INTO platform_messages (thread_id, sender_id, body, reply_to_message_id) VALUES (?, ?, ?, ?)')
-      .run(thread.id, req.adminUser.id, body, replyTarget?.id || null);
+    const result = database.prepare('INSERT INTO platform_messages (thread_id, sender_id, body, reply_to_message_id, recipient_owner_id) VALUES (?, ?, ?, ?, ?)')
+      .run(thread.id, req.adminUser.id, body, replyTarget?.id || null, recipientOwner.id);
     if (attachmentIds.length) database.prepare(`UPDATE platform_message_attachments SET message_id = ? WHERE id IN (${attachmentIds.map(() => '?').join(',')}) AND uploaded_by_id = ?`)
       .run(result.lastInsertRowid, ...attachmentIds, req.adminUser.id);
     database.prepare('UPDATE platform_message_threads SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(thread.id);
     return res.status(201).json({ success: true, message: { id: result.lastInsertRowid, threadId: thread.id, senderId: req.adminUser.id,
-      senderName: req.adminUser.display_name, senderEmail: req.adminUser.email, senderRole: req.adminUser.role, body, replyToMessageId: replyTarget?.id || null, createdAt: new Date().toISOString(), isRead: true } });
+      senderName: req.adminUser.display_name, senderEmail: req.adminUser.email, senderRole: req.adminUser.role, recipientOwnerId: recipientOwner.id, recipientOwnerName: recipientOwner.displayName, body, replyToMessageId: replyTarget?.id || null, createdAt: new Date().toISOString(), isRead: true } });
   }
 
   const all = req.body?.all === true;

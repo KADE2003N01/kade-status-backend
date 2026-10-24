@@ -41,7 +41,9 @@ database.exec(`
     email TEXT NOT NULL,
     phone TEXT NOT NULL,
     message TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'new',
+    deleted_at TEXT
   );
 
   CREATE TABLE IF NOT EXISTS download_enquiries (
@@ -101,11 +103,33 @@ database.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
+  CREATE TABLE IF NOT EXISTS contact_message_replies (
+    id INTEGER PRIMARY KEY,
+    contact_message_id INTEGER NOT NULL REFERENCES contact_messages(id) ON DELETE CASCADE,
+    admin_user_id INTEGER REFERENCES admin_users(id) ON DELETE SET NULL,
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
   CREATE TABLE IF NOT EXISTS platform_message_reads (
     message_id INTEGER NOT NULL REFERENCES platform_messages(id) ON DELETE CASCADE,
     reader_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
     read_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (message_id, reader_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS platform_message_hidden (
+    message_id INTEGER NOT NULL REFERENCES platform_messages(id) ON DELETE CASCADE,
+    admin_user_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    hidden_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (message_id, admin_user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS platform_message_permanent_hidden (
+    message_id INTEGER NOT NULL REFERENCES platform_messages(id) ON DELETE CASCADE,
+    admin_user_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    deleted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (message_id, admin_user_id)
   );
 
   CREATE TABLE IF NOT EXISTS download_email_verifications (
@@ -199,6 +223,10 @@ if (!platformMessageColumns.has('message_group_id')) database.exec('ALTER TABLE 
 if (!platformMessageColumns.has('message_group_label')) database.exec('ALTER TABLE platform_messages ADD COLUMN message_group_label TEXT');
 if (!platformMessageColumns.has('reply_allowed')) database.exec('ALTER TABLE platform_messages ADD COLUMN reply_allowed INTEGER NOT NULL DEFAULT 1');
 if (!platformMessageColumns.has('reply_to_message_id')) database.exec('ALTER TABLE platform_messages ADD COLUMN reply_to_message_id INTEGER REFERENCES platform_messages(id) ON DELETE SET NULL');
+if (!platformMessageColumns.has('recipient_owner_id')) database.exec('ALTER TABLE platform_messages ADD COLUMN recipient_owner_id INTEGER REFERENCES admin_users(id) ON DELETE SET NULL');
+const contactMessageColumns = new Set(database.prepare('PRAGMA table_info(contact_messages)').all().map((column) => column.name));
+if (!contactMessageColumns.has('status')) database.exec("ALTER TABLE contact_messages ADD COLUMN status TEXT NOT NULL DEFAULT 'new'");
+if (!contactMessageColumns.has('deleted_at')) database.exec('ALTER TABLE contact_messages ADD COLUMN deleted_at TEXT');
 database.exec(`CREATE TABLE IF NOT EXISTS platform_message_attachments (
   id TEXT PRIMARY KEY,
   uploaded_by_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
