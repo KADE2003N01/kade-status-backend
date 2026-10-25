@@ -95,6 +95,14 @@ database.exec(`
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
+  CREATE TABLE IF NOT EXISTS platform_message_owner_reply_access (
+    admin_user_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    owner_user_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    reply_allowed INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (admin_user_id, owner_user_id)
+  );
+
   CREATE TABLE IF NOT EXISTS platform_messages (
     id INTEGER PRIMARY KEY,
     thread_id INTEGER NOT NULL REFERENCES platform_message_threads(id) ON DELETE CASCADE,
@@ -116,6 +124,13 @@ database.exec(`
     reader_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
     read_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (message_id, reader_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS platform_message_deliveries (
+    message_id INTEGER NOT NULL REFERENCES platform_messages(id) ON DELETE CASCADE,
+    recipient_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    delivered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (message_id, recipient_id)
   );
 
   CREATE TABLE IF NOT EXISTS platform_message_hidden (
@@ -203,11 +218,12 @@ if (!adminColumns.has('phone')) database.exec('ALTER TABLE admin_users ADD COLUM
 if (!adminColumns.has('role')) database.exec("ALTER TABLE admin_users ADD COLUMN role TEXT NOT NULL DEFAULT 'portfolio_owner'");
 if (!adminColumns.has('status')) database.exec("ALTER TABLE admin_users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
 if (!adminColumns.has('roles_json')) database.exec("ALTER TABLE admin_users ADD COLUMN roles_json TEXT NOT NULL DEFAULT '[]'");
+const allSuperAdminRoles = ['platform_owner', 'portfolio_owner', 'content_manager', 'document_manager', 'download_manager', 'profile_manager'];
 for (const admin of database.prepare('SELECT id, role, roles_json FROM admin_users').all()) {
   let roles;
   try { roles = JSON.parse(admin.roles_json || '[]'); } catch { roles = []; }
   if (!Array.isArray(roles) || !roles.length) roles = [admin.role || 'portfolio_owner'];
-  if (admin.role === 'platform_owner' && !roles.includes('platform_owner')) roles.unshift('platform_owner');
+  if (admin.role === 'platform_owner' || roles.includes('platform_owner')) roles = allSuperAdminRoles;
   roles = [...new Set(roles.filter((role) => typeof role === 'string'))];
   database.prepare('UPDATE admin_users SET roles_json = ?, role = ? WHERE id = ?')
     .run(JSON.stringify(roles), roles.includes('platform_owner') ? 'platform_owner' : roles[0], admin.id);

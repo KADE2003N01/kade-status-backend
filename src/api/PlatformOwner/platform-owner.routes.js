@@ -6,11 +6,13 @@ import { sendAdminPasswordLink } from '../../services/admin-password-links.js';
 
 const router = express.Router();
 const ADMIN_ROLES = new Set(['platform_owner', 'portfolio_owner', 'content_manager', 'document_manager', 'download_manager', 'profile_manager']);
+const ALL_SUPER_ADMIN_ROLES = [...ADMIN_ROLES];
 const adminSelect = `SELECT id, display_name AS displayName, email, phone, role, roles_json AS rolesJson, status, created_at AS createdAt FROM admin_users`;
 function presentAdmin(admin) {
   if (!admin) return admin;
   let roles = [];
   try { roles = JSON.parse(admin.rolesJson || '[]'); } catch { roles = []; }
+  if (admin.role === 'platform_owner' || roles.includes('platform_owner')) roles = ALL_SUPER_ADMIN_ROLES;
   const result = { ...admin, roles: Array.isArray(roles) && roles.length ? roles : [admin.role] };
   delete result.rolesJson;
   return result;
@@ -126,11 +128,12 @@ router.post('/admins', async (req, res, next) => {
     const displayName = typeof req.body?.displayName === 'string' ? req.body.displayName.trim() : '';
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const phone = typeof req.body?.phone === 'string' ? req.body.phone.trim() : '';
-    const roles = [...new Set(Array.isArray(req.body?.roles) ? req.body.roles : (typeof req.body?.role === 'string' ? [req.body.role] : []))];
+    let roles = [...new Set(Array.isArray(req.body?.roles) ? req.body.roles : (typeof req.body?.role === 'string' ? [req.body.role] : []))];
     if (!displayName || displayName.length > 120) return res.status(400).json({ success: false, error: 'Enter a name from 1 to 120 characters.' });
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return res.status(400).json({ success: false, error: 'Enter a valid email address.' });
     if (phone.length > 40) return res.status(400).json({ success: false, error: 'Phone number must be 40 characters or less.' });
     if (!roles.length || roles.some((role) => !ADMIN_ROLES.has(role))) return res.status(400).json({ success: false, error: 'Choose at least one valid administrator role.' });
+    if (roles.includes('platform_owner')) roles = ALL_SUPER_ADMIN_ROLES;
     if (database.prepare('SELECT id FROM admin_users WHERE email = ?').get(email)) return res.status(409).json({ success: false, error: 'An admin with this email already exists.' });
     const salt = randomBytes(16).toString('hex');
     const hash = scryptSync(randomBytes(32).toString('hex'), salt, 64).toString('hex');
@@ -159,10 +162,11 @@ router.post('/admins/bulk-action', async (req, res, next) => {
   try {
     const targets = database.prepare("SELECT id, email, display_name, status FROM admin_users WHERE role <> 'platform_owner' ORDER BY id").all();
     if (action === 'assign_roles_all') {
-      const roles = [...new Set(Array.isArray(req.body?.roles) ? req.body.roles : [])];
+      let roles = [...new Set(Array.isArray(req.body?.roles) ? req.body.roles : [])];
       if (!roles.length || roles.some((role) => !ADMIN_ROLES.has(role))) {
         return res.status(400).json({ success: false, error: 'Choose at least one valid role to assign.' });
       }
+      if (roles.includes('platform_owner')) roles = ALL_SUPER_ADMIN_ROLES;
       const primaryRole = roles.includes('platform_owner') ? 'platform_owner' : roles[0];
       const changed = database.transaction(() => {
         const update = database.prepare("UPDATE admin_users SET role = ?, roles_json = ? WHERE role <> 'platform_owner'");
@@ -228,6 +232,7 @@ router.post('/admins/bulk-action', async (req, res, next) => {
 
 router.patch('/admins/:adminId/role', (req, res) => {
   const id = Number(req.params.adminId);
+  if (id === Number(req.adminUser.id)) return res.status(403).json({ success: false, error: 'You cannot change roles for the super-admin account in your active session.' });
   const role = typeof req.body?.role === 'string' ? req.body.role : '';
   if (!Number.isSafeInteger(id) || id < 1 || !ADMIN_ROLES.has(role) || role === 'platform_owner') return res.status(400).json({ success: false, error: 'Choose a valid administrator role.' });
   const target = database.prepare('SELECT id, role FROM admin_users WHERE id = ?').get(id);
@@ -240,13 +245,15 @@ router.patch('/admins/:adminId/role', (req, res) => {
 
 router.patch('/admins/:adminId/roles', (req, res) => {
   const id = Number(req.params.adminId);
-  const roles = [...new Set(Array.isArray(req.body?.roles) ? req.body.roles : [])];
+  let roles = [...new Set(Array.isArray(req.body?.roles) ? req.body.roles : [])];
   if (!Number.isSafeInteger(id) || id < 1 || !roles.length || roles.some((role) => !ADMIN_ROLES.has(role))) {
     return res.status(400).json({ success: false, error: 'Choose at least one valid administrator role.' });
   }
+  if (id === Number(req.adminUser.id)) return res.status(403).json({ success: false, error: 'You cannot change roles for the super-admin account in your active session.' });
   const target = database.prepare('SELECT id, email, role, roles_json FROM admin_users WHERE id = ?').get(id);
   if (!target) return res.status(404).json({ success: false, error: 'Admin account not found.' });
   const oldRoles = JSON.parse(target.roles_json || JSON.stringify([target.role]));
+  if (roles.includes('platform_owner')) roles = ALL_SUPER_ADMIN_ROLES;
   const removesOwner = oldRoles.includes('platform_owner') && !roles.includes('platform_owner');
   if (removesOwner) {
     const ownerCount = database.prepare("SELECT COUNT(*) AS count FROM admin_users WHERE role = 'platform_owner' AND status = 'active'").get().count;
