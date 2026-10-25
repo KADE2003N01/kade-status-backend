@@ -240,14 +240,14 @@ npm run setup:check
 npm run db:inspect
 ```
 
-Frontend checks from `kade-status-frontend`:
+Frontend checks from `my-digital-status-frontend`:
 
 ```powershell
 npm test
 npm run build
 ```
 
-The frontend build writes static assets to `kade-status-frontend/dist`. Its Vite configuration also generates page shells for the public and admin URLs. Deploy the built `dist` folder as the static site.
+The frontend build writes static assets to `my-digital-status-frontend/dist`. Its Vite configuration also generates page shells for the public and admin URLs. Deploy the built `dist` folder as the static site.
 
 ### Current Render layout
 
