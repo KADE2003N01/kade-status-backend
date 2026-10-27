@@ -31,7 +31,7 @@ app.listen(PORT, HOST, () => {
   console.log(`🔑 App Password set: ${process.env.EMAIL_PASSWORD ? '✅ YES' : '❌ NO'}`);
 }).on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    console.error(`❌ Error: Port ${PORT} is already in use. Run 'fuser -k ${PORT}/tcp' to clear it or change PORT in .env`);
+    console.error(`❌ Port ${PORT} is already in use. Reuse the running API with the portfolio dev stack, or set PORT to an available port before starting this server.`);
   } else {
     console.error('❌ Server failed to start:', err.message);
   }

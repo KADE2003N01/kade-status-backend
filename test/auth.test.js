@@ -389,14 +389,14 @@ test('admin credentials issue a revocable session and the admin name comes from 
       documentId: 'cv',
       name: 'Test Visitor',
       phone: '',
-      channel: 'sms',
       reason: 'I need this for a portfolio review.',
       consent: true
     })
   });
   assert.equal(missingEmail.status, 400);
+  assert.match((await missingEmail.json()).error, /valid email address/);
 
-  const bothContacts = await fetch(`${baseUrl}/api/downloads/request`, {
+  const emailWithPhone = await fetch(`${baseUrl}/api/downloads/request`, {
     ...requestOptions,
     method: 'POST',
     body: JSON.stringify({
@@ -404,25 +404,23 @@ test('admin credentials issue a revocable session and the admin name comes from 
       name: 'Test Visitor',
       email: 'visitor@example.com',
       phone: '+250788123456',
-      channel: 'email',
+      purpose: 'preview',
       reason: 'I need this for a portfolio review.',
       consent: true
     })
   });
-  assert.equal(bothContacts.status, 400);
+  assert.equal(emailWithPhone.status, 201);
+  const phoneContactChallenge = await emailWithPhone.json();
+  assert.equal(phoneContactChallenge.channel, 'email');
+  database.prepare('DELETE FROM download_email_verifications WHERE challenge_id = ?').run(phoneContactChallenge.challengeId);
 
   const failedEmailConfig = [
-    'NODE_ENV', 'EMAIL_USER', 'EMAIL_PASSWORD', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_SECURE',
-    'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM_NUMBER'
+    'NODE_ENV', 'EMAIL_USER', 'EMAIL_PASSWORD', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_SECURE'
   ].map((key) => [key, process.env[key]]);
   process.env.NODE_ENV = 'development';
   process.env.EMAIL_USER = '';
   process.env.EMAIL_PASSWORD = '';
-  delete process.env.TWILIO_ACCOUNT_SID;
-  delete process.env.TWILIO_AUTH_TOKEN;
-  delete process.env.TWILIO_FROM_NUMBER;
   let unavailableVerification;
-  let unavailableSmsVerification;
   try {
     unavailableVerification = await fetch(`${baseUrl}/api/downloads/request`, {
       ...requestOptions,
@@ -436,18 +434,6 @@ test('admin credentials issue a revocable session and the admin name comes from 
         consent: true
       })
     });
-    unavailableSmsVerification = await fetch(`${baseUrl}/api/downloads/request`, {
-      ...requestOptions,
-      method: 'POST',
-      body: JSON.stringify({
-        documentId: 'cv',
-        name: 'SMS Config Visitor',
-        phone: '+250788765432',
-        channel: 'sms',
-        reason: 'I need this for a portfolio review.',
-        consent: true
-      })
-    });
   } finally {
     for (const [key, value] of failedEmailConfig) {
       if (value === undefined) delete process.env[key];
@@ -455,9 +441,7 @@ test('admin credentials issue a revocable session and the admin name comes from 
     }
   }
   assert.equal(unavailableVerification.status, 503);
-  assert.equal(unavailableSmsVerification.status, 503);
   assert.match((await unavailableVerification.json()).error, /No email code was sent/);
-  assert.match((await unavailableSmsVerification.json()).error, /No SMS code was sent/);
 
   process.env.NODE_ENV = 'development';
   process.env.EMAIL_USER = 'sender@example.com';
@@ -496,56 +480,6 @@ test('admin credentials issue a revocable session and the admin name comes from 
   assert.equal(database.prepare(`
     SELECT COALESCE(SUM(attempts), 0) AS attempts FROM download_verification_limits
   `).get().attempts, attemptsBeforeFailedDelivery);
-
-  const failedSmsConfig = [
-    'NODE_ENV', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM_NUMBER'
-  ].map((key) => [key, process.env[key]]);
-  process.env.NODE_ENV = 'development';
-  process.env.TWILIO_ACCOUNT_SID = 'AC-test-account';
-  process.env.TWILIO_AUTH_TOKEN = 'test-only-token';
-  process.env.TWILIO_FROM_NUMBER = '+15005550006';
-  const attemptsBeforeFailedSms = database.prepare(`
-    SELECT COALESCE(SUM(attempts), 0) AS attempts FROM download_verification_limits
-  `).get().attempts;
-  const originalFetch = globalThis.fetch;
-  let twilioRequestBody;
-  let failedSmsDelivery;
-  globalThis.fetch = async (input, options) => {
-    if (String(input).startsWith('https://api.twilio.com/')) {
-      twilioRequestBody = new URLSearchParams(options.body);
-      return new Response('', { status: 401 });
-    }
-    return originalFetch(input, options);
-  };
-  try {
-    failedSmsDelivery = await fetch(`${baseUrl}/api/downloads/request`, {
-      ...requestOptions,
-      method: 'POST',
-      body: JSON.stringify({
-        documentId: 'cv',
-        name: 'Failed SMS Visitor',
-        phone: '+250788765432',
-        reason: 'I need this for a portfolio review.',
-        channel: 'sms',
-        consent: true
-      })
-    });
-  } finally {
-    globalThis.fetch = originalFetch;
-    for (const [key, value] of failedSmsConfig) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
-  assert.equal(twilioRequestBody.get('To'), '+250788765432');
-  assert.equal(failedSmsDelivery.status, 502);
-  assert.match((await failedSmsDelivery.json()).error, /No SMS code was sent/);
-  assert.equal(database.prepare(`
-    SELECT COUNT(*) AS count FROM download_email_verifications WHERE phone = ?
-  `).get('+250788765432').count, 0);
-  assert.equal(database.prepare(`
-    SELECT COALESCE(SUM(attempts), 0) AS attempts FROM download_verification_limits
-  `).get().attempts, attemptsBeforeFailedSms);
 
   const cvChallenge = await startDownloadVerification({
     documentId: 'cv',
@@ -756,24 +690,6 @@ test('admin credentials issue a revocable session and the admin name comes from 
     headers: { ...requestOptions.headers, Cookie: cookie }
   });
   assert.equal((await remainingRows.json()).downloads.length, 3);
-
-  const smsChallenge = await startDownloadVerification({
-    documentId: 'cv',
-    name: 'SMS Visitor',
-    phone: '+250788123456',
-    reason: 'I need the CV for a professional application.',
-    channel: 'sms',
-    consent: true
-  });
-  assert.equal(smsChallenge.channel, 'sms');
-  const smsVerification = await completeDownloadVerification(smsChallenge.challengeId);
-  assert.equal(smsVerification.status, 201);
-  assert.ok((await smsVerification.json()).downloadToken);
-  const verifiedSmsContact = database.prepare(`
-    SELECT email, phone FROM download_enquiries WHERE name = ?
-  `).get('SMS Visitor');
-  assert.equal(verifiedSmsContact.email, null);
-  assert.equal(verifiedSmsContact.phone, '+250788123456');
 
   const lockedChallenge = await startDownloadVerification({
     documentId: 'cv',

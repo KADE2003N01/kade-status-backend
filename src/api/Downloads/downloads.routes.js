@@ -26,20 +26,18 @@ function validEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-function logDeliveryFailure(channel, error) {
+function logDeliveryFailure(error) {
   const details = {
     code: typeof error?.code === 'string' ? error.code : undefined,
     responseCode: Number.isInteger(error?.responseCode) ? error.responseCode : undefined,
     statusCode: Number.isInteger(error?.statusCode) ? error.statusCode : undefined,
     command: typeof error?.command === 'string' ? error.command : undefined
   };
-  const authenticationRejected = channel === 'email'
-    && error?.code === 'EAUTH'
-    && error?.responseCode === 535;
+  const authenticationRejected = error?.code === 'EAUTH' && error?.responseCode === 535;
   console.error(
     authenticationRejected
       ? 'Email provider rejected SMTP authentication (535). Check EMAIL_USER and use a current Gmail App Password in EMAIL_PASSWORD.'
-      : `Could not deliver a document-request verification ${channel}:`,
+      : 'Could not deliver a document-request verification email:',
     details
   );
 }
@@ -90,13 +88,13 @@ router.post('/request', async (req, res, next) => {
     const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const phone = typeof req.body?.phone === 'string' ? req.body.phone.trim() : '';
-    const channel = req.body?.channel === 'sms' ? 'sms' : req.body?.channel === 'email' ? 'email' : (email && !phone ? 'email' : (phone && !email ? 'sms' : ''));
+    // A phone number is optional visitor contact information; verification is email-only.
     const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
     const documentId = typeof req.body?.documentId === 'string' ? req.body.documentId : '';
     const purpose = req.body?.purpose === 'preview' ? 'preview' : 'download';
     const parsedPhone = parseInternationalPhone(phone);
     const verifiedPhone = parsedPhone?.number || '';
-    const verifiedEmail = channel === 'email' ? email : '';
+    const verifiedEmail = email;
     const storedDocument = database.prepare(`
       SELECT document_id, title, filename, stored_filename
       FROM portfolio_documents WHERE document_id = ?
@@ -111,16 +109,10 @@ router.post('/request', async (req, res, next) => {
     if (purpose !== 'preview' && (name.length < 2 || name.length > 100)) {
       return res.status(400).json({ success: false, error: 'Enter your name (2 to 100 characters).' });
     }
-    if (email && phone) {
-      return res.status(400).json({ success: false, error: 'Choose email or SMS verification, not both.' });
-    }
-    if (!channel) {
-      return res.status(400).json({ success: false, error: 'Choose email or SMS verification to receive your verification code.' });
-    }
-    if (channel === 'email' && (email.length > 254 || !validEmail(email))) {
+    if (email.length > 254 || !validEmail(email)) {
       return res.status(400).json({ success: false, error: 'Enter a valid email address.' });
     }
-    if (channel === 'sms' && (phone.length > 30 || !parsedPhone)) {
+    if (phone && (phone.length > 30 || !parsedPhone)) {
       return res.status(400).json({ success: false, error: 'Enter a valid international phone number with its country calling code.' });
     }
     if (purpose !== 'preview' && (reason.length < 10 || reason.length > 1000)) {
@@ -134,7 +126,7 @@ router.post('/request', async (req, res, next) => {
     }
 
     await access(resolveWritablePath('private-documents',  document.storedName));
-    const transporter = channel === 'email' && process.env.NODE_ENV !== 'test' ? getTransporter() : null;
+    const transporter = process.env.NODE_ENV !== 'test' ? getTransporter() : null;
     if (process.env.NODE_ENV !== 'test' && !transporter) {
       return res.status(503).json({
         success: false,
@@ -145,7 +137,7 @@ router.post('/request', async (req, res, next) => {
     const now = Date.now();
     const ipAddress = req.ip || 'unknown';
     const recipient = email;
-    const emailHash = hashToken(`${channel}:${recipient}`);
+    const emailHash = hashToken(`email:${recipient}`);
     const challengeId = randomUUID();
     const code = process.env.NODE_ENV === 'test' && process.env.DOWNLOAD_VERIFICATION_TEST_CODE
       ? process.env.DOWNLOAD_VERIFICATION_TEST_CODE
@@ -227,7 +219,7 @@ router.post('/request', async (req, res, next) => {
         });
       } catch (error) {
         releaseReservation();
-        logDeliveryFailure(channel, error);
+        logDeliveryFailure(error);
         return res.status(502).json({
           success: false,
           error: 'No email code was sent. Check the email address and try again later.'
@@ -236,7 +228,7 @@ router.post('/request', async (req, res, next) => {
     }
 
     const recipientPreview = email.replace(/^(.).+(@.*)$/, '$1***$2');
-    const response = { success: true, challengeId, channel, recipientPreview, expiresInSeconds: VERIFICATION_DURATION_MS / 1000 };
+    const response = { success: true, challengeId, channel: 'email', recipientPreview, expiresInSeconds: VERIFICATION_DURATION_MS / 1000 };
     if (process.env.NODE_ENV === 'test' && process.env.DOWNLOAD_VERIFICATION_TEST_CODE) {
       response.testVerificationCode = code;
     }
