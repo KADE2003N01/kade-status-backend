@@ -31,7 +31,21 @@ app.listen(PORT, HOST, () => {
   console.log(`🔑 App Password set: ${process.env.EMAIL_PASSWORD ? '✅ YES' : '❌ NO'}`);
 }).on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    console.error(`❌ Port ${PORT} is already in use. Reuse the running API with the portfolio dev stack, or set PORT to an available port before starting this server.`);
+    fetch(`http://127.0.0.1:${PORT}/api/health`, { signal: AbortSignal.timeout(2000) })
+      .then(async (response) => {
+        const health = await response.json().catch(() => ({}));
+        if (response.ok && health.status === 'OK') {
+          console.log(`Portfolio API is already running on port ${PORT}; reusing that instance.`);
+          process.exit(0);
+        }
+        console.error(`❌ Port ${PORT} is in use by another service. Set PORT to an available port or stop that service.`);
+        process.exit(1);
+      })
+      .catch(() => {
+        console.error(`❌ Port ${PORT} is already in use and the listener is not the portfolio API. Set PORT to an available port or stop that service.`);
+        process.exit(1);
+      });
+    return;
   } else {
     console.error('❌ Server failed to start:', err.message);
   }

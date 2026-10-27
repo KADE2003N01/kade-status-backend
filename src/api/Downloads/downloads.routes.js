@@ -42,6 +42,19 @@ function logDeliveryFailure(error) {
   );
 }
 
+function emailDeliveryErrorMessage(error) {
+  if (error?.code === 'EAUTH' && error?.responseCode === 535) {
+    return 'The email provider rejected the SMTP login. Check EMAIL_USER and use a current Gmail App Password in EMAIL_PASSWORD.';
+  }
+  if (['EDNS', 'ENOTFOUND', 'ECONNECTION', 'ETIMEDOUT', 'ESOCKET'].includes(error?.code)) {
+    return 'The server could not connect to the email provider. Check the backend network connection and try again.';
+  }
+  if (Number.isInteger(error?.responseCode) && error.responseCode >= 500) {
+    return `The email provider refused the message (SMTP ${error.responseCode}). Check the sending account and recipient address.`;
+  }
+  return `Email delivery failed${error?.code ? ` (${error.code})` : ''}. Check the backend log and try again.`;
+}
+
 function getAuthorizedDownload(token) {
   if (!token || token.length > 100) return null;
   const accessToken = database.prepare(`
@@ -222,7 +235,7 @@ router.post('/request', async (req, res, next) => {
         logDeliveryFailure(error);
         return res.status(502).json({
           success: false,
-          error: 'No email code was sent. Check the email address and try again later.'
+          error: emailDeliveryErrorMessage(error)
         });
       }
     }
