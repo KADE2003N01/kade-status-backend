@@ -25,6 +25,7 @@ const localDevelopmentOrigins = [
 ];
 const knownFrontendOrigins = [
   'https://my-digital-status.onrender.com',
+  'https://david-portifolio.onrender.com',
   ...localDevelopmentOrigins
 ];
 const configuredOrigins = (process.env.FRONTEND_URL || '')

@@ -1,4 +1,4 @@
-﻿import { randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -129,7 +129,7 @@ router.get('/', (req, res, next) => {
       SELECT document_id, document_type, title, description, issued_at,
         institution, filename, stored_filename, updated_at, created_at
       FROM portfolio_documents
-      ORDER BY COALESCE(created_at, updated_at) DESC, updated_at DESC, document_id DESC
+      ORDER BY COALESCE(created_at, updated_at) DESC, updated_at DESC, document_id ASC
     `).all();
     const available = documents.filter((row) => {
       if (!row.stored_filename) return true;

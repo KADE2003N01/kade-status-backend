@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -14,6 +14,14 @@ const storageRoot = process.env.STORAGE_DIR
 export function resolveWritablePath(relativeFolder, filename) {
   const writablePath = path.join(storageRoot, relativeFolder, filename);
   mkdirSync(path.dirname(writablePath), { recursive: true });
+  if (!existsSync(writablePath) && storageRoot !== backendDirectory) {
+    const fallbackSource = path.join(backendDirectory, relativeFolder, filename);
+    if (existsSync(fallbackSource)) {
+      try {
+        copyFileSync(fallbackSource, writablePath);
+      } catch {}
+    }
+  }
   return writablePath;
 }
 

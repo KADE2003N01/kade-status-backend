@@ -1,4 +1,4 @@
-﻿import { randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import express from 'express';
@@ -168,8 +168,9 @@ router.post('/profile-image', requireAdmin, requireAdminRole('portfolio_owner', 
     if (!['admin', 'both', 'public'].includes(visibility)) {
       return res.status(400).json({ success: false, error: 'Choose admin only, both, or public only for this image.' });
     }
-    if (visibility !== 'admin' && req.adminUser?.role !== 'platform_owner') {
-      return res.status(403).json({ success: false, error: 'Only the controlling super admin can publish profile images to the shared public site.' });
+    const roles = req.adminUser?.roles || [req.adminUser?.role];
+    if (visibility !== 'admin' && !roles.includes('platform_owner') && !roles.includes('portfolio_owner')) {
+      return res.status(403).json({ success: false, error: 'Only the portfolio owner or platform owner can publish profile images to the shared public site.' });
     }
     const match = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(dataUrl);
     if (!match) {

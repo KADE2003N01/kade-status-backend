@@ -1,4 +1,4 @@
-﻿import { createHash, randomBytes, randomInt, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomInt, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { access } from 'node:fs/promises';
 import express from 'express';
 import database from '../../database/database.js';
@@ -90,13 +90,13 @@ router.post('/request', async (req, res, next) => {
     const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const phone = typeof req.body?.phone === 'string' ? req.body.phone.trim() : '';
-    const channel = req.body?.channel === 'email' ? 'email' : '';
+    const channel = req.body?.channel === 'sms' ? 'sms' : req.body?.channel === 'email' ? 'email' : (email && !phone ? 'email' : (phone && !email ? 'sms' : ''));
     const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
     const documentId = typeof req.body?.documentId === 'string' ? req.body.documentId : '';
     const purpose = req.body?.purpose === 'preview' ? 'preview' : 'download';
-    const verifiedEmail = channel === 'email' ? email : '';
     const parsedPhone = parseInternationalPhone(phone);
     const verifiedPhone = parsedPhone?.number || '';
+    const verifiedEmail = channel === 'email' ? email : '';
     const storedDocument = database.prepare(`
       SELECT document_id, title, filename, stored_filename
       FROM portfolio_documents WHERE document_id = ?
@@ -111,14 +111,17 @@ router.post('/request', async (req, res, next) => {
     if (purpose !== 'preview' && (name.length < 2 || name.length > 100)) {
       return res.status(400).json({ success: false, error: 'Enter your name (2 to 100 characters).' });
     }
-    if (purpose !== 'preview' && (phone.length > 30 || !parsedPhone)) {
-      return res.status(400).json({ success: false, error: 'Enter a valid international phone number with its country calling code.' });
+    if (email && phone) {
+      return res.status(400).json({ success: false, error: 'Choose email or SMS verification, not both.' });
     }
     if (!channel) {
-      return res.status(400).json({ success: false, error: 'Enter an email address to receive your verification code.' });
+      return res.status(400).json({ success: false, error: 'Choose email or SMS verification to receive your verification code.' });
     }
     if (channel === 'email' && (email.length > 254 || !validEmail(email))) {
       return res.status(400).json({ success: false, error: 'Enter a valid email address.' });
+    }
+    if (channel === 'sms' && (phone.length > 30 || !parsedPhone)) {
+      return res.status(400).json({ success: false, error: 'Enter a valid international phone number with its country calling code.' });
     }
     if (purpose !== 'preview' && (reason.length < 10 || reason.length > 1000)) {
       return res.status(400).json({ success: false, error: 'Describe why you need the document (10 to 1,000 characters).' });
@@ -367,10 +370,39 @@ router.post('/verify', async (req, res, next) => {
 });
 
 router.get('/preview/:documentId', async (req, res, next) => {
-  return res.status(403).json({
-    success: false,
-    error: 'Direct document previews are disabled. Verify your email before opening a preview.'
-  });
+  try {
+    const document = database.prepare(`
+      SELECT title, filename, stored_filename
+      FROM portfolio_documents WHERE document_id = ?
+    `).get(req.params.documentId);
+    if (!document) {
+      return res.status(404).json({ success: false, error: 'This document is no longer available.' });
+    }
+
+    const filePath = resolveWritablePath('private-documents', document.stored_filename);
+    try {
+      await access(filePath);
+    } catch {
+      return res.status(404).json({ success: false, error: 'This document is no longer available.' });
+    }
+    res.set({
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff'
+    });
+    return res.sendFile(filePath, {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `inline; filename="${document.filename}"`
+      }
+    }, (error) => {
+      if (error) {
+        if (!res.headersSent) return next(error);
+        console.error(`Could not preview public document "${document.title}":`, error);
+      }
+    });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 router.post('/preview', (req, res, next) => {

@@ -84,6 +84,18 @@ router.post('/login', async (req, res, next) => {
 
     res.cookie(SESSION_COOKIE, token, getCookieOptions());
 
+    const homepageRow = database.prepare('SELECT value_json FROM portfolio_settings WHERE setting_key = ?').get('homepage');
+    if (homepageRow) {
+      try {
+        const homepageContent = JSON.parse(homepageRow.value_json);
+        if (!homepageContent.adminNameCustom && user.display_name) {
+          homepageContent.adminName = user.display_name;
+          database.prepare('UPDATE portfolio_settings SET value_json = ?, updated_at = ? WHERE setting_key = ?')
+            .run(JSON.stringify(homepageContent), new Date().toISOString(), 'homepage');
+        }
+      } catch {}
+    }
+
     return res.json({
       success: true,
       user: { email: user.email, displayName: user.display_name },
