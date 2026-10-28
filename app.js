@@ -48,7 +48,9 @@ app.use(cors({
 
 // Request Logger
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  }
   next();
 });
 

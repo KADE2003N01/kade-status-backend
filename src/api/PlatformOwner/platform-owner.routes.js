@@ -74,16 +74,22 @@ router.get('/inbox-counts', (req, res) => {
   const incoming = database.prepare(`SELECT COUNT(*) AS count FROM platform_messages message
     JOIN platform_message_threads thread ON thread.id = message.thread_id
     JOIN admin_users sender ON sender.id = message.sender_id
-    WHERE sender.role <> 'platform_owner'`).get().count;
+    WHERE sender.id <> ? AND message.deleted_at IS NULL
+      AND (COALESCE(message.recipient_owner_id, thread.admin_user_id) = ? OR message.recipient_owner_id IS NULL)`).get(req.adminUser.id, req.adminUser.id).count;
   const outgoing = database.prepare(`SELECT COUNT(*) AS count
     FROM platform_messages message JOIN admin_users sender ON sender.id = message.sender_id
-    WHERE sender.role = 'platform_owner'`).get().count;
+    JOIN platform_message_threads thread ON thread.id = message.thread_id
+    WHERE sender.id = ? AND message.deleted_at IS NULL
+      AND COALESCE(message.recipient_owner_id, thread.admin_user_id) <> ?`).get(req.adminUser.id, req.adminUser.id).count;
   const unreadMessages = database.prepare(`SELECT COUNT(*) AS count FROM platform_messages message
     JOIN platform_message_threads thread ON thread.id = message.thread_id
     JOIN admin_users sender ON sender.id = message.sender_id
-    WHERE sender.role <> 'platform_owner' AND NOT EXISTS (
+    WHERE sender.id <> ? AND message.deleted_at IS NULL
+      AND (COALESCE(message.recipient_owner_id, thread.admin_user_id) = ? OR message.recipient_owner_id IS NULL) AND NOT EXISTS (
       SELECT 1 FROM platform_message_reads state WHERE state.message_id = message.id AND state.reader_id = ?
-    )`).get(req.adminUser.id).count;
+    ) AND NOT EXISTS (
+      SELECT 1 FROM platform_message_permanent_hidden hidden WHERE hidden.message_id = message.id AND hidden.admin_user_id = ?
+    )`).get(req.adminUser.id, req.adminUser.id, req.adminUser.id, req.adminUser.id).count;
   return res.json({ success: true, requests, messages: unreadMessages, messagesIncoming: incoming, messagesOutgoing: outgoing });
 });
 

@@ -13,6 +13,7 @@ router.use(requireAdmin);
 router.use('/visitors', visitorMessagesRouter);
 const MESSAGE_FILE_LIMIT = 50 * 1024 * 1024;
 const MESSAGE_TOTAL_ATTACHMENT_LIMIT = 100 * 1024 * 1024;
+const allowedMessageReactions = new Set(['👍', '❤️', '😂', '😮', '🙏']);
 const attachmentTypes = {
   'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp',
   'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov',
@@ -57,9 +58,9 @@ async function removeUnreferencedFiles(names) {
 
 async function cleanupExpiredAttachments() {
   const stale = database.prepare(`SELECT id, stored_name AS storedName FROM platform_message_attachments
-    WHERE message_id IS NULL AND message_group_id IS NULL AND created_at < datetime('now', '-24 hours')`).all();
+    WHERE message_id IS NULL AND public_message_id IS NULL AND message_group_id IS NULL AND created_at < datetime('now', '-24 hours')`).all();
   if (!stale.length) return;
-  const remove = database.prepare('DELETE FROM platform_message_attachments WHERE id = ? AND message_id IS NULL AND message_group_id IS NULL');
+  const remove = database.prepare('DELETE FROM platform_message_attachments WHERE id = ? AND message_id IS NULL AND public_message_id IS NULL AND message_group_id IS NULL');
   stale.forEach((row) => remove.run(row.id));
   await removeUnreferencedFiles(stale.map((row) => row.storedName));
 }
@@ -68,10 +69,10 @@ cleanupExpiredAttachments().catch(() => {});
 const attachmentCleanupTimer = setInterval(() => cleanupExpiredAttachments().catch(() => {}), 60 * 60 * 1000);
 attachmentCleanupTimer.unref?.();
 
-async function clearMessagesPermanently(messageIds, ownerId) {
+async function clearMessagesPermanently(messageIds, senderId, ownerOnly = true) {
   const cleared = database.transaction(() => {
     const find = database.prepare(`SELECT id, message_group_id AS messageGroupId FROM platform_messages WHERE id = ? AND sender_id = ?
-      AND EXISTS (SELECT 1 FROM admin_users sender WHERE sender.id = platform_messages.sender_id AND sender.role = 'platform_owner')`);
+      ${ownerOnly ? "AND EXISTS (SELECT 1 FROM admin_users sender WHERE sender.id = platform_messages.sender_id AND sender.role = 'platform_owner')" : ''}`);
     const findGroupFiles = database.prepare('SELECT stored_name FROM platform_message_attachments WHERE message_group_id = ?');
     const findMessageFiles = database.prepare('SELECT stored_name FROM platform_message_attachments WHERE message_id = ?');
     const deleteGroupFiles = database.prepare('DELETE FROM platform_message_attachments WHERE message_group_id = ?');
@@ -82,7 +83,7 @@ async function clearMessagesPermanently(messageIds, ownerId) {
     const storedNames = [];
     let count = 0;
     for (const id of messageIds) {
-      const message = find.get(id, ownerId);
+      const message = find.get(id, senderId);
       if (!message) continue;
       const key = message.messageGroupId || `message:${message.id}`;
       if (visited.has(key)) continue;
@@ -90,11 +91,11 @@ async function clearMessagesPermanently(messageIds, ownerId) {
       if (message.messageGroupId) {
         storedNames.push(...findGroupFiles.all(message.messageGroupId).map((row) => row.stored_name));
         deleteGroupFiles.run(message.messageGroupId);
-        count += deleteGroup.run(ownerId, message.messageGroupId).changes;
+        count += deleteGroup.run(senderId, message.messageGroupId).changes;
       } else {
         storedNames.push(...findMessageFiles.all(message.id).map((row) => row.stored_name));
         deleteMessageFiles.run(message.id);
-        count += deleteOne.run(message.id, ownerId).changes;
+        count += deleteOne.run(message.id, senderId).changes;
       }
     }
     return { count, storedNames };
@@ -103,10 +104,99 @@ async function clearMessagesPermanently(messageIds, ownerId) {
   return cleared.count;
 }
 
-function attachmentRowsForMessages(rows) {
+async function deleteMessagesForEveryone(messageIds, req) {
+  const ownerWorkspace = isPlatformOwner(req.adminUser) && !isAdminWorkspace(req);
+  const find = ownerWorkspace
+    ? database.prepare(`SELECT id, message_group_id AS messageGroupId FROM platform_messages
+        WHERE id = ? AND deleted_at IS NULL`)
+    : database.prepare(`SELECT message.id, message.message_group_id AS messageGroupId FROM platform_messages message
+        JOIN platform_message_threads thread ON thread.id = message.thread_id
+        WHERE message.id = ? AND message.deleted_at IS NULL
+          AND (thread.admin_user_id = ? OR message.recipient_owner_id = ?)`);
+  const cleared = database.transaction(() => {
+    const findGroupFiles = database.prepare('SELECT stored_name FROM platform_message_attachments WHERE message_group_id = ?');
+    const findMessageFiles = database.prepare('SELECT stored_name FROM platform_message_attachments WHERE message_id = ?');
+    const deleteGroupFiles = database.prepare('DELETE FROM platform_message_attachments WHERE message_group_id = ?');
+    const deleteMessageFiles = database.prepare('DELETE FROM platform_message_attachments WHERE message_id = ?');
+    const deleteGroup = database.prepare('DELETE FROM platform_messages WHERE message_group_id = ?');
+    const deleteOne = database.prepare('DELETE FROM platform_messages WHERE id = ?');
+    const visited = new Set();
+    const storedNames = [];
+    let count = 0;
+    for (const id of messageIds) {
+      const message = ownerWorkspace ? find.get(id) : find.get(id, req.adminUser.id, req.adminUser.id);
+      if (!message) continue;
+      const key = message.messageGroupId || `message:${message.id}`;
+      if (visited.has(key)) continue;
+      visited.add(key);
+      if (message.messageGroupId) {
+        storedNames.push(...findGroupFiles.all(message.messageGroupId).map((row) => row.stored_name));
+        deleteGroupFiles.run(message.messageGroupId);
+        count += deleteGroup.run(message.messageGroupId).changes;
+      } else {
+        storedNames.push(...findMessageFiles.all(message.id).map((row) => row.stored_name));
+        deleteMessageFiles.run(message.id);
+        count += deleteOne.run(message.id).changes;
+      }
+    }
+    return { count, storedNames };
+  })();
+  await removeUnreferencedFiles(cleared.storedNames);
+  return cleared.count;
+}
+
+function attachmentRowsForMessages(rows, viewerId) {
   const find = database.prepare(`SELECT id, original_name, mime_type, size_bytes FROM platform_message_attachments
     WHERE message_id = ? OR (message_group_id IS NOT NULL AND message_group_id = ?) ORDER BY created_at, id`);
-  return rows.map((message) => ({ ...message, attachments: find.all(message.id, message.messageGroupId || '').map(attachmentInfo) }));
+  const ids = rows.map((message) => message.id);
+  const reactions = new Map();
+  const flags = new Map();
+  if (ids.length) {
+    const placeholders = ids.map(() => '?').join(',');
+    const reactionRows = database.prepare(`SELECT message_id AS messageId, emoji, reactor_id AS reactorId
+      FROM platform_message_reactions WHERE message_id IN (${placeholders}) ORDER BY created_at`).all(...ids);
+    reactionRows.forEach((reaction) => {
+      if (!reactions.has(reaction.messageId)) reactions.set(reaction.messageId, []);
+      const summary = reactions.get(reaction.messageId);
+      let item = summary.find((entry) => entry.emoji === reaction.emoji);
+      if (!item) {
+        item = { emoji: reaction.emoji, count: 0, reacted: false };
+        summary.push(item);
+      }
+      item.count += 1;
+      if (Number(reaction.reactorId) === Number(viewerId)) item.reacted = true;
+    });
+    database.prepare(`SELECT message_id AS messageId, is_pinned AS isPinned, is_starred AS isStarred
+      FROM platform_message_user_flags WHERE user_id = ? AND message_id IN (${placeholders})`)
+      .all(viewerId, ...ids).forEach((flag) => flags.set(flag.messageId, flag));
+  }
+  return rows.map((message) => ({
+    ...message,
+    attachments: find.all(message.id, message.messageGroupId || '').map(attachmentInfo),
+    reactions: reactions.get(message.id) || [],
+    isPinned: Boolean(flags.get(message.id)?.isPinned),
+    isStarred: Boolean(flags.get(message.id)?.isStarred)
+  }));
+}
+
+function findMessageForUser(req, messageId) {
+  if (isPlatformOwner(req.adminUser) && !isAdminWorkspace(req)) {
+    return database.prepare('SELECT id FROM platform_messages WHERE id = ? AND deleted_at IS NULL').get(messageId);
+  }
+  return database.prepare(`SELECT message.id FROM platform_messages message
+    JOIN platform_message_threads thread ON thread.id = message.thread_id
+    JOIN admin_users sender ON sender.id = message.sender_id
+    WHERE message.id = ? AND message.deleted_at IS NULL
+      AND (thread.admin_user_id = ? OR (sender.role = 'platform_owner' AND message.recipient_owner_id = ?))
+      AND NOT EXISTS (SELECT 1 FROM platform_message_hidden hidden WHERE hidden.message_id = message.id AND hidden.admin_user_id = ?)
+      AND NOT EXISTS (SELECT 1 FROM platform_message_permanent_hidden hidden WHERE hidden.message_id = message.id AND hidden.admin_user_id = ?)`)
+    .get(messageId, req.adminUser.id, req.adminUser.id, req.adminUser.id, req.adminUser.id);
+}
+
+function attachmentRowsForPublicMessages(rows) {
+  const find = database.prepare(`SELECT id, original_name, mime_type, size_bytes FROM platform_message_attachments
+    WHERE public_message_id = ? ORDER BY created_at, id`);
+  return rows.map((message) => ({ ...message, attachments: find.all(message.id).map(attachmentInfo) }));
 }
 
 router.post('/attachments', express.raw({ type: 'application/octet-stream', limit: MESSAGE_FILE_LIMIT }), async (req, res) => {
@@ -133,16 +223,22 @@ router.post('/attachments', express.raw({ type: 'application/octet-stream', limi
 });
 
 router.get('/attachments/:attachmentId', async (req, res) => {
-  const rows = database.prepare(`SELECT attachment.*, message.deleted_at AS deletedAt, thread.admin_user_id AS adminId
+  const rows = database.prepare(`SELECT attachment.*, message.deleted_at AS deletedAt, thread.admin_user_id AS adminId,
+      public_message.deleted_at AS publicMessageDeletedAt
     FROM platform_message_attachments attachment
     LEFT JOIN platform_messages message ON message.id = attachment.message_id
       OR (attachment.message_group_id IS NOT NULL AND message.message_group_id = attachment.message_group_id)
     LEFT JOIN platform_message_threads thread ON thread.id = message.thread_id
+    LEFT JOIN admin_public_messages public_message ON public_message.id = attachment.public_message_id
     WHERE attachment.id = ?`).all(req.params.attachmentId);
   const owner = isPlatformOwner(req.adminUser);
   const attachment = rows.find((row) => owner
-    ? row.message_id !== null || row.message_group_id !== null
-    : Number(row.adminId) === Number(req.adminUser.id) && !row.deletedAt);
+    ? row.public_message_id !== null
+      ? !row.publicMessageDeletedAt
+      : row.message_id !== null || row.message_group_id !== null
+    : row.public_message_id !== null
+      ? !row.publicMessageDeletedAt
+      : Number(row.adminId) === Number(req.adminUser.id) && !row.deletedAt);
   if (!attachment) return res.status(404).json({ success: false, error: 'Attachment not found.' });
   const filePath = resolveWritablePath('message-attachments', attachment.stored_name);
   res.setHeader('Content-Type', attachment.mime_type);
@@ -197,7 +293,10 @@ function unreadCount(user) {
 router.get('/unread-count', (req, res) => {
   const owner = isPlatformOwner(req.adminUser);
   const adminWorkspace = isAdminWorkspace(req);
-  const visitorCount = owner && !adminWorkspace ? 0 : database.prepare("SELECT COUNT(*) AS count FROM contact_messages WHERE status = 'new' AND deleted_at IS NULL").get().count;
+  const visitorCount = owner && !adminWorkspace ? 0 : database.prepare(`SELECT COUNT(*) AS count FROM contact_messages message
+    WHERE message.deleted_at IS NULL AND NOT EXISTS (
+      SELECT 1 FROM contact_message_reads state WHERE state.contact_message_id = message.id AND state.reader_id = ?
+    )`).get(req.adminUser.id).count;
   if (adminWorkspace) {
     const directUnread = database.prepare(`SELECT COUNT(*) AS count FROM platform_messages message
       JOIN platform_message_threads thread ON thread.id = message.thread_id
@@ -221,6 +320,97 @@ router.get('/super-admins', (req, res) => {
     WHERE (owner.role = 'platform_owner' OR EXISTS (SELECT 1 FROM json_each(owner.roles_json) WHERE value = 'platform_owner')) AND owner.id <> ? ORDER BY CASE owner.status WHEN 'active' THEN 0 ELSE 1 END, owner.display_name COLLATE NOCASE, owner.id`).all(req.adminUser.id, req.adminUser.id, req.adminUser.id)
     .map((admin) => ({ ...admin, replyAllowed: Boolean(admin.replyAllowed) }));
   return res.json({ success: true, admins });
+});
+
+router.get('/public', (req, res) => {
+  const rows = database.prepare(`SELECT message.id, message.sender_id AS senderId, sender.display_name AS senderName,
+      sender.email AS senderEmail, sender.role AS senderRole, sender.roles_json AS senderRolesJson,
+      sender.status AS senderStatus, message.body, message.created_at AS createdAt,
+      message.edited_at AS editedAt, message.deleted_at AS deletedAt,
+      EXISTS (SELECT 1 FROM admin_public_message_reads state WHERE state.message_id = message.id AND state.reader_id = ?) AS isRead
+    FROM admin_public_messages message
+    LEFT JOIN admin_users sender ON sender.id = message.sender_id
+    ORDER BY message.created_at, message.id`).all(req.adminUser.id).map((message) => {
+    let roles = [];
+    try { roles = JSON.parse(message.senderRolesJson || '[]'); } catch { roles = []; }
+    if (message.senderRole === 'platform_owner' && !roles.includes('platform_owner')) roles.unshift('platform_owner');
+    delete message.senderRolesJson;
+    return { ...message, senderRoles: roles };
+  });
+  return res.json({ success: true, messages: attachmentRowsForPublicMessages(rows) });
+});
+
+router.post('/public/read', (req, res) => {
+  const result = database.prepare(`INSERT OR IGNORE INTO admin_public_message_reads (message_id, reader_id)
+    SELECT message.id, ? FROM admin_public_messages message
+    WHERE message.sender_id IS NOT NULL AND message.sender_id <> ? AND message.deleted_at IS NULL`)
+    .run(req.adminUser.id, req.adminUser.id);
+  return res.json({ success: true, markedRead: result.changes });
+});
+
+router.post('/public', (req, res) => {
+  const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
+  const attachmentIds = Array.isArray(req.body?.attachmentIds)
+    ? [...new Set(req.body.attachmentIds.filter((id) => typeof id === 'string' && id.length <= 64))]
+    : [];
+  if (body.length > 3000 || (!body && !attachmentIds.length)) {
+    return res.status(400).json({ success: false, error: 'Enter a message or attach a file. Message text can be up to 3,000 characters.' });
+  }
+  if (attachmentIds.length > 10) return res.status(400).json({ success: false, error: 'Attach up to 10 files to one message.' });
+  const uploadedAttachments = attachmentIds.length
+    ? database.prepare(`SELECT id, size_bytes AS size FROM platform_message_attachments
+        WHERE id IN (${attachmentIds.map(() => '?').join(',')})
+          AND uploaded_by_id = ? AND message_id IS NULL AND public_message_id IS NULL AND message_group_id IS NULL`)
+      .all(...attachmentIds, req.adminUser.id)
+    : [];
+  if (uploadedAttachments.length !== attachmentIds.length) return res.status(400).json({ success: false, error: 'One or more attachments are invalid or already used.' });
+  if (uploadedAttachments.reduce((sum, attachment) => sum + attachment.size, 0) > MESSAGE_TOTAL_ATTACHMENT_LIMIT) {
+    return res.status(413).json({ success: false, error: 'Attachments together must be 100 MB or smaller.' });
+  }
+  const saved = database.transaction(() => {
+    const result = database.prepare('INSERT INTO admin_public_messages (sender_id, body) VALUES (?, ?)')
+      .run(req.adminUser.id, body);
+    if (attachmentIds.length) {
+      database.prepare(`UPDATE platform_message_attachments SET public_message_id = ?
+        WHERE id IN (${attachmentIds.map(() => '?').join(',')}) AND uploaded_by_id = ?`)
+        .run(result.lastInsertRowid, ...attachmentIds, req.adminUser.id);
+    }
+    return result.lastInsertRowid;
+  })();
+  return res.status(201).json({
+    success: true,
+    message: {
+      id: saved,
+      senderId: req.adminUser.id,
+      senderName: req.adminUser.display_name,
+      senderEmail: req.adminUser.email,
+      senderRole: req.adminUser.role,
+      senderStatus: req.adminUser.status,
+      body,
+      createdAt: new Date().toISOString(),
+      isRead: true
+    }
+  });
+});
+
+router.patch('/public/:messageId', (req, res) => {
+  const messageId = Number(req.params.messageId);
+  const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
+  if (!Number.isSafeInteger(messageId) || messageId < 1) return res.status(400).json({ success: false, error: 'Choose a valid message.' });
+  if (body.length < 1 || body.length > 3000) return res.status(400).json({ success: false, error: 'Message must be between 1 and 3,000 characters.' });
+  const updated = database.prepare(`UPDATE admin_public_messages SET body = ?, edited_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND sender_id = ? AND deleted_at IS NULL`).run(body, messageId, req.adminUser.id);
+  if (!updated.changes) return res.status(404).json({ success: false, error: 'Your public message could not be found.' });
+  return res.json({ success: true, message: { id: messageId, body } });
+});
+
+router.delete('/public/:messageId', (req, res) => {
+  const messageId = Number(req.params.messageId);
+  if (!Number.isSafeInteger(messageId) || messageId < 1) return res.status(400).json({ success: false, error: 'Choose a valid message.' });
+  const deleted = database.prepare(`UPDATE admin_public_messages SET deleted_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND sender_id = ? AND deleted_at IS NULL`).run(messageId, req.adminUser.id);
+  if (!deleted.changes) return res.status(404).json({ success: false, error: 'Your public message could not be found.' });
+  return res.json({ success: true, message: 'Public message deleted.' });
 });
 
 router.get('/', (req, res) => {
@@ -266,7 +456,9 @@ router.get('/', (req, res) => {
         EXISTS (SELECT 1 FROM platform_message_deliveries delivery WHERE delivery.message_id = message.id AND delivery.recipient_id = COALESCE(message.recipient_owner_id, thread.admin_user_id)) AS isDelivered,
         0 AS isHidden
         FROM platform_messages message JOIN platform_message_threads thread ON thread.id = message.thread_id
-        LEFT JOIN admin_users sender ON sender.id = message.sender_id LEFT JOIN admin_users owner ON owner.id = message.recipient_owner_id ORDER BY message.created_at, message.id`).all(req.adminUser.id)
+        LEFT JOIN admin_users sender ON sender.id = message.sender_id LEFT JOIN admin_users owner ON owner.id = message.recipient_owner_id
+        WHERE NOT EXISTS (SELECT 1 FROM platform_message_permanent_hidden hidden WHERE hidden.message_id = message.id AND hidden.admin_user_id = ?)
+        ORDER BY message.created_at, message.id`).all(req.adminUser.id, req.adminUser.id)
     : adminWorkspace
       ? database.prepare(`SELECT message.id, message.thread_id AS threadId, message.sender_id AS senderId, sender.display_name AS senderName,
         sender.email AS senderEmail, sender.role AS senderRole, owner.display_name AS recipientOwnerName, message.recipient_owner_id AS recipientOwnerId, message.body, message.created_at AS createdAt, message.deleted_at AS deletedAt, message.edited_at AS editedAt, message.message_group_id AS messageGroupId, message.message_group_label AS messageGroupLabel, message.reply_allowed AS replyAllowed, message.reply_to_message_id AS replyToMessageId,
@@ -289,7 +481,7 @@ router.get('/', (req, res) => {
           AND NOT EXISTS (SELECT 1 FROM platform_message_permanent_hidden hidden WHERE hidden.message_id = message.id AND hidden.admin_user_id = ?) ORDER BY message.created_at, message.id`)
       .all(req.adminUser.id, req.adminUser.id, req.adminUser.id, req.adminUser.id);
 
-  return res.json({ success: true, threads, messages: attachmentRowsForMessages(rows), unreadCount: unreadCount(req.adminUser) });
+  return res.json({ success: true, threads, messages: attachmentRowsForMessages(rows, req.adminUser.id), unreadCount: unreadCount(req.adminUser) });
 });
 
 router.post('/threads/:threadId/read', (req, res) => {
@@ -311,7 +503,7 @@ router.post('/threads/:threadId/read', (req, res) => {
     if (!sender) return res.status(404).json({ success: false, error: 'Super-admin conversation not found.' });
   }
   const incoming = isPlatformOwner(req.adminUser) && !adminWorkspace
-    ? "sender.role <> 'platform_owner'"
+    ? `sender.id <> ${Number(req.adminUser.id)} AND (COALESCE(message.recipient_owner_id, thread.admin_user_id) = ${Number(req.adminUser.id)} OR message.recipient_owner_id IS NULL)`
     : adminWorkspace
       ? `sender.role = 'platform_owner' AND sender.id <> ${Number(req.adminUser.id)} AND (thread.admin_user_id = ${Number(req.adminUser.id)} OR message.recipient_owner_id = ${Number(req.adminUser.id)})`
       : 'sender.role = \'platform_owner\'';
@@ -393,6 +585,54 @@ router.patch('/:messageId', (req, res) => {
   return res.json({ success: true, message: { id: messageId, body } });
 });
 
+router.post('/:messageId/reactions', (req, res) => {
+  const messageId = Number(req.params.messageId);
+  const emoji = typeof req.body?.emoji === 'string' ? req.body.emoji : '';
+  if (!Number.isSafeInteger(messageId) || messageId < 1 || !allowedMessageReactions.has(emoji)) {
+    return res.status(400).json({ success: false, error: 'Choose a valid message and reaction.' });
+  }
+  const message = findMessageForUser(req, messageId);
+  if (!message) return res.status(404).json({ success: false, error: 'Message not found in your conversations.' });
+
+  const existing = database.prepare('SELECT 1 FROM platform_message_reactions WHERE message_id = ? AND reactor_id = ? AND emoji = ?')
+    .get(messageId, req.adminUser.id, emoji);
+  if (existing) database.prepare('DELETE FROM platform_message_reactions WHERE message_id = ? AND reactor_id = ? AND emoji = ?')
+    .run(messageId, req.adminUser.id, emoji);
+  else database.prepare('INSERT INTO platform_message_reactions (message_id, reactor_id, emoji) VALUES (?, ?, ?)')
+    .run(messageId, req.adminUser.id, emoji);
+
+  const rows = database.prepare(`SELECT emoji, reactor_id AS reactorId FROM platform_message_reactions
+    WHERE message_id = ? ORDER BY created_at`).all(messageId);
+  const reactions = [];
+  rows.forEach((row) => {
+    let item = reactions.find((reaction) => reaction.emoji === row.emoji);
+    if (!item) {
+      item = { emoji: row.emoji, count: 0, reacted: false };
+      reactions.push(item);
+    }
+    item.count += 1;
+    if (Number(row.reactorId) === Number(req.adminUser.id)) item.reacted = true;
+  });
+  return res.json({ success: true, reactions });
+});
+
+router.post('/:messageId/flags', (req, res) => {
+  const messageId = Number(req.params.messageId);
+  const flag = req.body?.flag;
+  if (!Number.isSafeInteger(messageId) || messageId < 1 || !['pin', 'star'].includes(flag)
+    || typeof req.body?.enabled !== 'boolean') {
+    return res.status(400).json({ success: false, error: 'Choose a valid message, action, and state.' });
+  }
+  if (!findMessageForUser(req, messageId)) return res.status(404).json({ success: false, error: 'Message not found in your conversations.' });
+  const column = flag === 'pin' ? 'is_pinned' : 'is_starred';
+  database.prepare(`INSERT INTO platform_message_user_flags (message_id, user_id, ${column})
+    VALUES (?, ?, ?) ON CONFLICT(message_id, user_id) DO UPDATE SET ${column} = excluded.${column},
+    updated_at = CURRENT_TIMESTAMP`).run(messageId, req.adminUser.id, req.body.enabled ? 1 : 0);
+  const result = database.prepare('SELECT is_pinned AS isPinned, is_starred AS isStarred FROM platform_message_user_flags WHERE message_id = ? AND user_id = ?')
+    .get(messageId, req.adminUser.id);
+  return res.json({ success: true, isPinned: Boolean(result.isPinned), isStarred: Boolean(result.isStarred) });
+});
+
 router.delete('/bulk-clear', (req, res) => {
   const adminWorkspace = isAdminWorkspace(req);
   const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))] : [];
@@ -457,66 +697,69 @@ router.delete('/bulk-clear', (req, res) => {
 });
 
 router.delete('/bulk-clear-permanent', async (req, res) => {
-  if (!isPlatformOwner(req.adminUser)) return res.status(403).json({ success: false, error: 'Only a super-admin can clear sent messages permanently.' });
   const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))] : [];
-  if (!ids.length || ids.length > 5000) return res.status(400).json({ success: false, error: 'Select between 1 and 5,000 sent messages.' });
-  const count = await clearMessagesPermanently(ids, req.adminUser.id);
-  return res.json({ success: true, cleared: count, message: `${count} message${count === 1 ? '' : 's'} cleared permanently.` });
+  const ownerWorkspace = isPlatformOwner(req.adminUser) && !isAdminWorkspace(req);
+  if (!ids.length || ids.length > (ownerWorkspace ? 5000 : 500)) return res.status(400).json({ success: false, error: 'Select a valid number of messages.' });
+  if (req.body?.confirmation !== 'delete') return res.status(400).json({ success: false, code: 'CONFIRMATION_REQUIRED', error: 'Type delete to permanently delete these messages for everyone.' });
+  const count = await deleteMessagesForEveryone(ids, req);
+  return res.json({ success: true, cleared: count, message: `${count} message${count === 1 ? '' : 's'} deleted permanently for everyone.` });
+});
+
+router.delete('/bulk-hide', (req, res) => {
+  if (!isPlatformOwner(req.adminUser) || isAdminWorkspace(req)) {
+    return res.status(403).json({ success: false, error: 'Only a super-admin can remove received messages from this inbox.' });
+  }
+  const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0))] : [];
+  if (!ids.length || ids.length > 5000) return res.status(400).json({ success: false, error: 'Select a valid number of received messages.' });
+  const placeholders = ids.map(() => '?').join(',');
+  const hidden = database.prepare(`INSERT OR IGNORE INTO platform_message_permanent_hidden (message_id, admin_user_id)
+    SELECT message.id, ? FROM platform_messages message
+    JOIN platform_message_threads thread ON thread.id = message.thread_id
+    WHERE message.id IN (${placeholders}) AND message.deleted_at IS NULL
+      AND message.sender_id <> ? AND COALESCE(message.recipient_owner_id, thread.admin_user_id) = ?`)
+    .run(req.adminUser.id, ...ids, req.adminUser.id, req.adminUser.id).changes;
+  return res.json({ success: true, hidden, message: `${hidden} received message${hidden === 1 ? '' : 's'} removed from your inbox.` });
+});
+
+router.delete('/clear-all', async (req, res) => {
+  if (!isPlatformOwner(req.adminUser) || isAdminWorkspace(req)) {
+    return res.status(403).json({ success: false, error: 'Only a super-admin can clear all admin chat conversations.' });
+  }
+  if (req.body?.confirmation !== 'delete') {
+    return res.status(400).json({ success: false, code: 'CONFIRMATION_REQUIRED', error: 'Type delete to permanently clear every admin chat conversation.' });
+  }
+  const cleared = database.transaction(() => {
+    const storedNames = database.prepare(`SELECT stored_name FROM platform_message_attachments
+      WHERE message_id IS NOT NULL OR message_group_id IS NOT NULL OR public_message_id IS NOT NULL`).all().map((row) => row.stored_name);
+    const privateCount = database.prepare('SELECT COUNT(*) AS count FROM platform_messages').get().count;
+    const sharedCount = database.prepare('SELECT COUNT(*) AS count FROM admin_public_messages').get().count;
+    database.prepare('DELETE FROM platform_message_attachments WHERE message_id IS NOT NULL OR message_group_id IS NOT NULL OR public_message_id IS NOT NULL').run();
+    database.prepare('DELETE FROM platform_messages').run();
+    database.prepare('DELETE FROM admin_public_messages').run();
+    database.prepare('INSERT INTO platform_admin_audit (actor_id, action, details_json) VALUES (?, ?, ?)')
+      .run(req.adminUser.id, 'admin_messages.clear_all', JSON.stringify({ privateCount, sharedCount }));
+    return { count: privateCount + sharedCount, storedNames };
+  })();
+  await removeUnreferencedFiles(cleared.storedNames);
+  return res.json({ success: true, cleared: cleared.count, message: `${cleared.count} admin chat message${cleared.count === 1 ? '' : 's'} permanently deleted for everyone.` });
 });
 
 router.delete('/:messageId/clear-permanent', async (req, res) => {
-  if (!isPlatformOwner(req.adminUser)) return res.status(403).json({ success: false, error: 'Only a super-admin can clear sent messages permanently.' });
   const messageId = Number(req.params.messageId);
   if (!Number.isSafeInteger(messageId) || messageId < 1) return res.status(400).json({ success: false, error: 'Choose a valid message.' });
-  const count = await clearMessagesPermanently([messageId], req.adminUser.id);
+  const ownerWorkspace = isPlatformOwner(req.adminUser) && !isAdminWorkspace(req);
+  const count = await clearMessagesPermanently([messageId], req.adminUser.id, ownerWorkspace);
   if (!count) return res.status(404).json({ success: false, error: 'Sent message not found.' });
   return res.json({ success: true, cleared: count, message: 'Message cleared permanently.' });
 });
 
-router.delete('/:messageId', (req, res) => {
-  const adminWorkspace = isAdminWorkspace(req);
+router.delete('/:messageId', async (req, res) => {
   const messageId = Number(req.params.messageId);
   if (!Number.isSafeInteger(messageId) || messageId < 1) return res.status(400).json({ success: false, error: 'Choose a valid message.' });
-  if (!isPlatformOwner(req.adminUser) || adminWorkspace) {
-    const result = database.prepare(`UPDATE platform_messages SET deleted_at = CURRENT_TIMESTAMP
-      WHERE id = ? AND sender_id = ? AND message_group_id IS NULL AND deleted_at IS NULL
-        AND EXISTS (SELECT 1 FROM platform_message_threads thread WHERE thread.id = platform_messages.thread_id AND thread.admin_user_id = ?)`)
-      .run(messageId, req.adminUser.id, req.adminUser.id);
-    if (result.changes) return res.json({ success: true, message: 'Sent message cleared.' });
-    const incoming = database.prepare(`SELECT message.id, message.reply_allowed AS replyAllowed,
-        COALESCE(access.reply_allowed, ${adminWorkspace ? 1 : 'thread.reply_allowed'}) AS threadReplyAllowed FROM platform_messages message
-      JOIN platform_message_threads thread ON thread.id = message.thread_id
-      JOIN admin_users sender ON sender.id = message.sender_id
-      LEFT JOIN platform_message_owner_reply_access access ON access.admin_user_id = ? AND access.owner_user_id = sender.id
-      WHERE message.id = ? AND (thread.admin_user_id = ? OR message.recipient_owner_id = ?) AND sender.role = 'platform_owner'
-        AND message.deleted_at IS NULL`)
-      .get(req.adminUser.id, messageId, req.adminUser.id, req.adminUser.id);
-    if (!incoming) return res.status(404).json({ success: false, error: 'This message cannot be removed from your inbox.' });
-    const alreadyHidden = database.prepare('SELECT 1 FROM platform_message_hidden WHERE message_id = ? AND admin_user_id = ?').get(messageId, req.adminUser.id);
-    if (alreadyHidden) {
-      database.prepare('INSERT OR IGNORE INTO platform_message_permanent_hidden (message_id, admin_user_id) VALUES (?, ?)').run(messageId, req.adminUser.id);
-      return res.json({ success: true, permanentlyDeleted: true, message: 'Message permanently removed from your inbox.' });
-    }
-    const repliesDisabled = !incoming.replyAllowed || !incoming.threadReplyAllowed;
-    if (repliesDisabled && req.body?.confirmation !== 'DELETE') {
-      return res.status(400).json({ success: false, code: 'CONFIRMATION_REQUIRED', error: 'Type DELETE to remove this message.' });
-    }
-    database.prepare('INSERT OR IGNORE INTO platform_message_hidden (message_id, admin_user_id) VALUES (?, ?)').run(messageId, req.adminUser.id);
-    return res.json({ success: true, cleared: true, message: 'Message cleared from your inbox.' });
-  }
-  const result = database.transaction(() => {
-    const message = database.prepare(`SELECT id, message_group_id AS messageGroupId FROM platform_messages WHERE id = ? AND sender_id = ?
-      AND EXISTS (SELECT 1 FROM admin_users sender WHERE sender.id = platform_messages.sender_id AND sender.role = 'platform_owner')`)
-      .get(messageId, req.adminUser.id);
-    if (!message) return 0;
-    return message.messageGroupId
-      ? database.prepare('UPDATE platform_messages SET deleted_at = CURRENT_TIMESTAMP WHERE sender_id = ? AND message_group_id = ? AND deleted_at IS NULL')
-        .run(req.adminUser.id, message.messageGroupId).changes
-      : database.prepare('UPDATE platform_messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND sender_id = ? AND deleted_at IS NULL')
-        .run(message.id, req.adminUser.id).changes;
-  })();
-  if (!result) return res.status(404).json({ success: false, error: 'Sent message not found.' });
-  return res.json({ success: true, message: 'Sent message cleared.' });
+  if (req.body?.confirmation !== 'delete') return res.status(400).json({ success: false, code: 'CONFIRMATION_REQUIRED', error: 'Type delete to permanently delete this message for everyone.' });
+  const deleted = await deleteMessagesForEveryone([messageId], req);
+  if (!deleted) return res.status(404).json({ success: false, error: 'Message not found in your conversations.' });
+  return res.json({ success: true, permanentlyDeleted: true, message: 'Message deleted permanently for everyone.' });
 });
 
 router.post('/', (req, res) => {
@@ -593,6 +836,20 @@ router.post('/', (req, res) => {
   }
   if (!recipients.length) return res.status(409).json({ success: false, error: 'There are no active customer admins to receive this message.' });
 
+  let replyToMessageId = null;
+  if (req.body?.replyToMessageId !== undefined && req.body?.replyToMessageId !== null) {
+    const requestedReplyId = Number(req.body.replyToMessageId);
+    if (!Number.isSafeInteger(requestedReplyId) || requestedReplyId < 1 || recipients.length !== 1) {
+      return res.status(400).json({ success: false, error: 'Choose one valid conversation to reply in.' });
+    }
+    const thread = database.prepare('SELECT id FROM platform_message_threads WHERE admin_user_id = ?').get(recipients[0].id);
+    const replyTarget = thread && database.prepare(`SELECT id, reply_allowed AS replyAllowed FROM platform_messages
+      WHERE id = ? AND thread_id = ? AND deleted_at IS NULL`).get(requestedReplyId, thread.id);
+    if (!replyTarget) return res.status(404).json({ success: false, error: 'The selected message is no longer available to reply to.' });
+    if (!replyTarget.replyAllowed) return res.status(403).json({ success: false, error: 'Replies are not allowed to this message.' });
+    replyToMessageId = replyTarget.id;
+  }
+
   const messageGroupId = randomUUID();
   const groupLabel = all ? 'all' : requestedRole ? roleLabels[requestedRole] : null;
   const created = [];
@@ -605,10 +862,10 @@ router.post('/', (req, res) => {
           VALUES (?, ?, ?, CURRENT_TIMESTAMP)
           ON CONFLICT(admin_user_id, owner_user_id) DO UPDATE SET reply_allowed = excluded.reply_allowed, updated_at = CURRENT_TIMESTAMP`)
           .run(recipient.id, req.adminUser.id, replyAllowed ? 1 : 0);
-        const result = database.prepare('INSERT INTO platform_messages (thread_id, sender_id, body, message_group_id, message_group_label, reply_allowed) VALUES (?, ?, ?, ?, ?, ?)')
-          .run(thread.id, req.adminUser.id, body, messageGroupId, groupLabel, messageReplyAllowed ? 1 : 0);
+        const result = database.prepare('INSERT INTO platform_messages (thread_id, sender_id, body, message_group_id, message_group_label, reply_allowed, reply_to_message_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
+          .run(thread.id, req.adminUser.id, body, messageGroupId, groupLabel, messageReplyAllowed ? 1 : 0, replyToMessageId);
         database.prepare('UPDATE platform_message_threads SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(thread.id);
-        return { id: result.lastInsertRowid, threadId: thread.id, adminId: recipient.id };
+        return { id: result.lastInsertRowid, threadId: thread.id, adminId: recipient.id, replyToMessageId };
       })();
       created.push(saved);
     } catch {

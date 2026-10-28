@@ -111,12 +111,61 @@ database.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
+  CREATE TABLE IF NOT EXISTS admin_public_messages (
+    id INTEGER PRIMARY KEY,
+    sender_id INTEGER REFERENCES admin_users(id) ON DELETE SET NULL,
+    body TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    edited_at TEXT,
+    deleted_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS admin_public_message_reads (
+    message_id INTEGER NOT NULL REFERENCES admin_public_messages(id) ON DELETE CASCADE,
+    reader_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    read_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (message_id, reader_id)
+  );
+
   CREATE TABLE IF NOT EXISTS contact_message_replies (
     id INTEGER PRIMARY KEY,
     contact_message_id INTEGER NOT NULL REFERENCES contact_messages(id) ON DELETE CASCADE,
     admin_user_id INTEGER REFERENCES admin_users(id) ON DELETE SET NULL,
     body TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS contact_message_reads (
+    contact_message_id INTEGER NOT NULL REFERENCES contact_messages(id) ON DELETE CASCADE,
+    reader_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    read_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (contact_message_id, reader_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS platform_message_reactions (
+    message_id INTEGER NOT NULL REFERENCES platform_messages(id) ON DELETE CASCADE,
+    reactor_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    emoji TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (message_id, reactor_id, emoji)
+  );
+
+  CREATE TABLE IF NOT EXISTS platform_message_user_flags (
+    message_id INTEGER NOT NULL REFERENCES platform_messages(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    is_pinned INTEGER NOT NULL DEFAULT 0,
+    is_starred INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (message_id, user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS contact_message_reactions (
+    contact_message_id INTEGER REFERENCES contact_messages(id) ON DELETE CASCADE,
+    reply_id INTEGER REFERENCES contact_message_replies(id) ON DELETE CASCADE,
+    reactor_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    emoji TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK ((contact_message_id IS NOT NULL AND reply_id IS NULL) OR (contact_message_id IS NULL AND reply_id IS NOT NULL))
   );
 
   CREATE TABLE IF NOT EXISTS platform_message_reads (
@@ -247,6 +296,7 @@ database.exec(`CREATE TABLE IF NOT EXISTS platform_message_attachments (
   id TEXT PRIMARY KEY,
   uploaded_by_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
   message_id INTEGER REFERENCES platform_messages(id) ON DELETE CASCADE,
+  public_message_id INTEGER REFERENCES admin_public_messages(id) ON DELETE CASCADE,
   message_group_id TEXT,
   original_name TEXT NOT NULL,
   mime_type TEXT NOT NULL,
@@ -254,7 +304,14 @@ database.exec(`CREATE TABLE IF NOT EXISTS platform_message_attachments (
   stored_name TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 )`);
+const messageAttachmentColumns = new Set(database.prepare('PRAGMA table_info(platform_message_attachments)').all().map((column) => column.name));
+if (!messageAttachmentColumns.has('public_message_id')) database.exec('ALTER TABLE platform_message_attachments ADD COLUMN public_message_id INTEGER REFERENCES admin_public_messages(id) ON DELETE CASCADE');
 database.exec('CREATE INDEX IF NOT EXISTS idx_platform_message_attachments_group ON platform_message_attachments(message_group_id)');
+database.exec('CREATE INDEX IF NOT EXISTS idx_admin_public_messages_created ON admin_public_messages(created_at, id)');
+database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_contact_message_reactions_root
+  ON contact_message_reactions(contact_message_id, reactor_id, emoji) WHERE contact_message_id IS NOT NULL`);
+database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_contact_message_reactions_reply
+  ON contact_message_reactions(reply_id, reactor_id, emoji) WHERE reply_id IS NOT NULL`);
 
 // Track the real upload date of every document (existing rows keep NULL = seeded defaults).
 const documentColumns = new Set(
