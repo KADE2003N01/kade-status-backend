@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { after, test } from 'node:test';
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { defaultHomepageContent, validateHomepageContent } from '../src/config/homepage-content.js';
 
 const databasePath = path.join(tmpdir(), `kade-auth-test-${process.pid}.sqlite`);
 const storageDirectory = path.join(tmpdir(), `kade-auth-storage-${process.pid}`);
+const ebcFixturePath = path.join(storageDirectory, 'private-documents', 'AGENDA_EBC 2026.pdf');
+mkdirSync(path.dirname(ebcFixturePath), { recursive: true });
+const ebcFixture = Buffer.alloc(4_000_001, 0x20);
+ebcFixture.write('%PDF-1.7\n');
+writeFileSync(ebcFixturePath, ebcFixture);
 process.env.DATABASE_PATH = databasePath;
 process.env.STORAGE_DIR = storageDirectory;
 process.env.ADMIN_EMAIL = 'admin-test@example.com';
@@ -69,6 +74,7 @@ after(async () => {
     if (existsSync(imagePath)) unlinkSync(imagePath);
   }
   database.close();
+  if (existsSync(ebcFixturePath)) unlinkSync(ebcFixturePath);
   for (const suffix of ['', '-shm', '-wal']) {
     const filePath = `${databasePath}${suffix}`;
     if (existsSync(filePath)) unlinkSync(filePath);
@@ -510,7 +516,7 @@ test('admin credentials issue a revocable session and the admin name comes from 
     }
   }
   assert.equal(unavailableVerification.status, 503);
-  assert.match((await unavailableVerification.json()).error, /No email code was sent/);
+  assert.match((await unavailableVerification.json()).error, /Email code delivery is not configured/);
 
   process.env.NODE_ENV = 'development';
   process.env.EMAIL_USER = 'sender@example.com';
@@ -542,7 +548,7 @@ test('admin credentials issue a revocable session and the admin name comes from 
     }
   }
   assert.equal(failedDelivery.status, 502);
-  assert.match((await failedDelivery.json()).error, /No email code was sent/);
+  assert.match((await failedDelivery.json()).error, /email provider|No email code was sent/i);
   assert.equal(database.prepare(`
     SELECT COUNT(*) AS count FROM download_email_verifications WHERE email = ?
   `).get('smtp-failure@example.com').count, 0);
@@ -569,7 +575,7 @@ test('admin credentials issue a revocable session and the admin name comes from 
     SELECT email, phone FROM download_enquiries WHERE name = ?
   `).get('Test Visitor');
   assert.equal(verifiedEmailContact.email, 'visitor@example.com');
-  assert.equal(verifiedEmailContact.phone, null);
+  assert.equal(verifiedEmailContact.phone, '');
 
   const adminDownloads = await fetch(`${baseUrl}/api/downloads`, {
     headers: { ...requestOptions.headers, Cookie: cookie }

@@ -8,6 +8,9 @@ import homepageRoutes from '../api/Homepage/homepage.routes.js';
 import platformOwnerRoutes from '../api/PlatformOwner/platform-owner.routes.js';
 import supportRoutes from '../api/Support/support.routes.js';
 import messageRoutes from '../api/Messages/messages.routes.js';
+import portfolioRoutes from '../api/Portfolios/portfolios.routes.js';
+import publicPortfolioRoutes from '../api/Portfolios/public-portfolios.routes.js';
+import recruiterRoutes from '../api/Portfolios/recruiter.routes.js';
 
 const router = Router();
 
@@ -20,5 +23,8 @@ router.use('/messages', messageRoutes);
 router.use('/downloads', downloadRoutes);
 router.use('/documents', documentRoutes);
 router.use('/homepage', homepageRoutes);
+router.use('/portfolios', portfolioRoutes);
+router.use('/public', recruiterRoutes);
+router.use('/public', publicPortfolioRoutes);
 
 export default router;

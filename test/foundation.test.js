@@ -3,6 +3,7 @@ import { after, test } from 'node:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import Database from 'better-sqlite3';
 import { z } from 'zod';
 import { validateRequest } from '../src/middleware/validate-request.js';
 
@@ -40,6 +41,87 @@ test('platform account migration is applied and safe to rerun', () => {
   assert.ok(database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'").get());
   assert.equal(database.pragma('foreign_keys', { simple: true }), 1);
   assert.equal(database.pragma('journal_mode', { simple: true }).toLowerCase(), 'wal');
+});
+
+test('portfolio migrations preserve an existing portfolios table', () => {
+  const legacyDatabase = new Database(':memory:');
+  legacyDatabase.pragma('foreign_keys = ON');
+  legacyDatabase.exec(`
+    CREATE TABLE schema_migrations (
+      version INTEGER PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT INTO schema_migrations (version, name) VALUES
+      (1, '001_platform_accounts.sql'),
+      (2, '002_portfolios.sql');
+    CREATE TABLE users (id INTEGER PRIMARY KEY);
+    INSERT INTO users (id) VALUES (7);
+    CREATE TABLE portfolios (
+      id INTEGER PRIMARY KEY,
+      owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      slug TEXT NOT NULL COLLATE NOCASE UNIQUE,
+      template_id TEXT NOT NULL DEFAULT 'minimal_grid',
+      status TEXT NOT NULL DEFAULT 'draft',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT INTO portfolios (id, owner_user_id, slug) VALUES (11, 7, 'legacy');
+  `);
+
+  try {
+    runMigrations(legacyDatabase);
+    assert.deepEqual(
+      legacyDatabase.prepare('SELECT id, owner_user_id, slug FROM portfolios').get(),
+      { id: 11, owner_user_id: 7, slug: 'legacy' }
+    );
+    assert.ok(legacyDatabase.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'portfolio_sections'"
+    ).get());
+    assert.deepEqual(
+      legacyDatabase.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map(({ version }) => version),
+      [1, 2, 3, 4]
+    );
+  } finally {
+    legacyDatabase.close();
+  }
+});
+
+test('portfolio migration replaces only an empty legacy portfolios table', () => {
+  const legacyDatabase = new Database(':memory:');
+  legacyDatabase.pragma('foreign_keys = ON');
+  legacyDatabase.exec(`
+    CREATE TABLE schema_migrations (
+      version INTEGER PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT INTO schema_migrations (version, name) VALUES
+      (1, '001_platform_accounts.sql'),
+      (2, '002_portfolios.sql');
+    CREATE TABLE users (id INTEGER PRIMARY KEY);
+    CREATE TABLE portfolios (
+      id INTEGER PRIMARY KEY,
+      owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      slug TEXT NOT NULL UNIQUE,
+      template TEXT NOT NULL DEFAULT 'minimal',
+      status TEXT NOT NULL DEFAULT 'draft',
+      content_json TEXT NOT NULL DEFAULT '{}',
+      published_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  try {
+    runMigrations(legacyDatabase);
+    const columns = new Set(legacyDatabase.pragma('table_info(portfolios)').map(({ name }) => name));
+    assert.ok(columns.has('owner_user_id'));
+    assert.ok(columns.has('template_id'));
+    assert.equal(columns.has('owner_id'), false);
+  } finally {
+    legacyDatabase.close();
+  }
 });
 
 test('Zod request validation returns field issues and exposes parsed data', () => {

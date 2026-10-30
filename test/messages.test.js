@@ -142,7 +142,10 @@ test('admin inbox lists active super-admins and supports editable, clearable mes
   assert.equal(adminInboxRemoval.status, 200, 'the normal-admin Manage action removes selected received messages from that inbox');
   assert.equal((await (await request(adminToken)).json()).messages.find((message) => message.id === ownerReplyMessage.id).isHidden, 1, 'the received message is hidden in the admin inbox');
   assert.ok((await (await request(ownerToken)).json()).messages.some((message) => message.id === ownerReplyMessage.id), 'removing a received message does not delete it for its sender');
-  const permanentlyRemovedFromInbox = await request(adminToken, `/${ownerReplyMessage.id}`, { method: 'DELETE' });
+  const permanentlyRemovedFromInbox = await request(adminToken, `/${ownerReplyMessage.id}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ confirmation: 'delete' })
+  });
   assert.equal(permanentlyRemovedFromInbox.status, 200);
   assert.ok(!(await (await request(adminToken)).json()).messages.some((message) => message.id === ownerReplyMessage.id), 'a hidden message can be permanently removed from the current inbox');
 
@@ -150,7 +153,10 @@ test('admin inbox lists active super-admins and supports editable, clearable mes
   const denied = await request(adminToken, '', { method: 'POST', body: JSON.stringify({ body: 'This should be blocked', recipientOwnerId: ownerId }) });
   assert.equal(denied.status, 403);
 
-  const cleared = await request(adminToken, `/${sentMessage.id}`, { method: 'DELETE' });
+  const cleared = await request(adminToken, `/${sentMessage.id}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ confirmation: 'delete' })
+  });
   assert.equal(cleared.status, 200);
   assert.equal((await cleared.json()).permanentlyDeleted, true);
   const ownerInboxAfterDelete = await request(ownerToken);
@@ -159,7 +165,7 @@ test('admin inbox lists active super-admins and supports editable, clearable mes
   const bulkSent = await request(adminToken, '', { method: 'POST', body: JSON.stringify({ body: 'Bulk delete this message', recipientOwnerId: ownerId }) });
   const bulkMessageId = (await bulkSent.json()).message.id;
   const bulkDeleted = await request(adminToken, '/bulk-clear-permanent', {
-    method: 'DELETE', body: JSON.stringify({ ids: [bulkMessageId] })
+    method: 'DELETE', body: JSON.stringify({ ids: [bulkMessageId], confirmation: 'delete' })
   });
   assert.equal(bulkDeleted.status, 200, 'a normal admin can permanently delete their own sent message in bulk');
   assert.ok(!(await (await request(ownerToken)).json()).messages.some((message) => message.id === bulkMessageId));
@@ -270,7 +276,7 @@ test('only a super-admin can permanently clear all admin chat history with expli
   assert.ok(database.prepare('SELECT COUNT(*) AS count FROM platform_messages').get().count > 0);
   assert.ok(database.prepare('SELECT COUNT(*) AS count FROM admin_public_messages').get().count > 0);
 
-  const cleared = await request(ownerToken, '/clear-all', { method: 'DELETE', body: JSON.stringify({ confirmation: 'DELETE' }) });
+  const cleared = await request(ownerToken, '/clear-all', { method: 'DELETE', body: JSON.stringify({ confirmation: 'delete' }) });
   assert.equal(cleared.status, 200);
   assert.ok((await cleared.json()).cleared > 0);
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM platform_messages').get().count, 0);

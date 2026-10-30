@@ -1,0 +1,86 @@
+{
+  "planHash": "5d3c92f33fd83326258271fe45124e6c3b3ff237ef9a8cd0edace93fc61876f9",
+  "phase": "standalone",
+  "recordedAtUtc": "2026-10-30T13:36:17.0333621Z",
+  "retryCount": 2,
+  "resetBaseline": false,
+  "complete": true,
+  "result": {
+    "setupSucceeded": true,
+    "setupDurationMs": 76148,
+    "setupFailureOutput": null,
+    "assertions": [
+      {
+        "name": "tests-pass",
+        "kind": "process",
+        "verificationMethod": "test-results",
+        "passed": true,
+        "timedOut": false,
+        "skipped": false,
+        "skippedReason": null,
+        "exitCode": 0,
+        "outputSample": "\r\n\u003E kade-status-backend@1.0.0 test\r\n\u003E node --test\r\n\r\nAdmin account created for admin-test@example.com.\r\n\u2714 Vite frontend origin can make credentialed API requests (720.2002ms)\r\n\u2714 configured deployed frontend origin can make credentialed API requests (186.8735ms)\r\n2026-10-30T13:35:56.263Z - POST /api/auth/login\r\n2026-10-30T13:35:56.975Z - POST /api/auth/logout\r\n\u2714 remember me issues a persistent 30-day session without storing a password (1372.1446ms)\r\n2026-10-30T13:35:57.054Z - POST /api/downloads/request\r\n2026-10-30T13:35:57.654Z - POST /api/downloads/verify\r\n2026-10-30T13:35:58.195Z - POST /api/downloads/verify\r\n2026-10-30T13:35:58.686Z - POST /api/downloads/preview\r\n2026-10-30T13:35:58.771Z - POST /api/downloads/preview\r\n\u2714 public document previews require email verification (1787.7792ms)\r\n\u2714 homepage content accepts optional fields and defaults omitted fields (28.579ms)\r\n2026-10-30T13:35:58.836Z - POST /api/auth/login\r\n2026-10-30T13:35:59.328Z - PUT /api/homepage\r\n2026-10-30T13:35:59.381Z - POST /api/homepage/reset\r\n\u2714 admin can publish checkbox changes with blank and omitted fields (581.9353ms)\r\n2026-10-30T13:35:59.438Z - POST /api/auth/login\r\n2026-10-30T13:35:59.836Z - POST /api/auth/login\r\n2026-10-30T13:36:00.226Z - PUT /api/homepage\r\n2026-10-30T13:36:00.241Z - PUT /api/homepage\r\n2026-10-30T13:36:00.277Z - POST /api/auth/login\r\n2026-10-30T13:36:00.660Z - PUT /api/homepage\r\n2026-10-30T13:36:00.680Z - POST /api/auth/login\r\n2026-10-30T13:36:01.037Z - PUT /api/homepage\r\nServer error: content.brand.imageUrl must be a safe web address or relative path.\r\n2026-10-30T13:36:01.050Z - POST /api/homepage/reset\r\n2026-10-30T13:36:01.065Z - POST /api/homepage/profile-image\r\n2026-10-30T13:36:01.138Z - POST /api/homepage/profile-image\r\n2026-10-30T13:36:01.152Z - POST /api/homepage/profile-image\r\n2026-10-30T13:36:01.233Z - DELETE /api/downloads/1\r\n2026-10-30T13:36:01.262Z - POST /api/documents/cv\r\n2026-10-30T13:36:01.273Z - POST /api/homepage/profile-image\r\n2026-10-30T13:36:01.283Z - POST /api/documents/certificates\r\n2026-10-30T13:36:01.294Z - POST /api/downloads/preview\r\n2026-10-30T13:36:01.343Z - POST /api/downloads/request\r\n2026-10-30T13:36:01.364Z - POST /api/downloads/request\r\n2026-10-30T13:36:01.378Z - POST /api/downloads/request\r\n2026-10-30T13:36:01.778Z - POST /api/downloads/request\r\n2026-10-30T13:36:01.798Z - POST /api/downloads/request\r\nCould not deliver a document-request verification email: {\r\n  code: \u0027ESOCKET\u0027,\r\n  responseCode: undefined,\r\n  statusCode: undefined,\r\n  command: \u0027CONN\u0027\r\n}\r\n2026-10-30T13:36:02.285Z - POST /api/downloads/request\r\n2026-10-30T13:36:02.679Z - POST /api/downloads/verify\r\n2026-10-30T13:36:03.072Z - POST /api/downloads/verify\r\n2026-10-30T13:36:03.471Z - POST /api/downloads/preview\r\n2026-10-30T13:36:03.493Z - POST /api/downloads/file\r\n2026-10-30T13:36:03.529Z - POST /api/downloads/file\r\n2026-10-30T13:36:03.540Z - POST /api/downloads/request\r\n2026-10-30T13:36:03.914Z - POST /api/downloads/verify\r\n2026-10-30T13:36:04.306Z - POST /api/downloads/file\r\n2026-10-30T13:36:04.493Z - POST /api/documents/certificates\r\n2026-10-30T13:36:04.530Z - PUT /api/documents/certificates/certificate-3078838d-911c-4d20-afbd-4616936b43bb\r\n2026-10-30T13:36:04.541Z - PUT /api/documents/certificates/certificate-3078838d-911c-4d20-afbd-4616936b43bb\r\n2026-10-30T13:36:04.556Z - POST /api/downloads/request\r\n2026-10-30T13:36:04.919Z - POST /api/downloads/verify\r\n2026-10-30T13:36:05.295Z - POST /api/downloads/file\r\n2026-10-30T13:36:05.314Z - POST /api/documents/cv\r\n2026-10-30T13:36:05.339Z - POST /api/downloads/request\r\n2026-10-30T13:36:05.715Z - POST /api/downloads/verify\r\n2026-10-30T13:36:06.080Z - POST /api/downloads/file\r\n2026-10-30T13:36:06.112Z - DELETE /api/downloads/1\r\n2026-10-30T13:36:06.136Z - POST /api/downloads/request\r\n2026-10-30T13:36:06.487Z - POST /api/downloads/verify\r\n2026-10-30T13:36:06.790Z - POST /api/downloads/verify\r\n2026-10-30T13:36:07.110Z - POST /api/downloads/verify\r\n2026-10-30T13:36:07.411Z - POST /api/downloads/verify\r\n2026-10-30T13:36:07.704Z - POST /api/downloads/verify\r\n2026-10-30T13:36:08.013Z - POST /ap\n\u2026[truncated]",
+        "durationMs": 26263,
+        "testResults": {
+          "testFramework": "unknown",
+          "runnerDetectedFrom": "none",
+          "testsTotal": 0,
+          "testsPassed": 0,
+          "testsFailed": 0,
+          "testsSkipped": 0,
+          "parseFailed": true
+        }
+      },
+      {
+        "name": "health-endpoint-200",
+        "kind": "http-probe",
+        "verificationMethod": "http-status",
+        "passed": true,
+        "timedOut": false,
+        "skipped": false,
+        "skippedReason": null,
+        "exitCode": null,
+        "outputSample": "HTTP 200\n{\u0022status\u0022:\u0022OK\u0022}\n--- server output ---\n\r\n\u003E kade-status-backend@1.0.0 start\r\n\u003E node server.js\r\n\r\n\u2705 .env file loaded successfully. Parsed variables: [\r\n  \u0027PORT\u0027,\r\n  \u0027NODE_ENV\u0027,\r\n  \u0027FRONTEND_URL\u0027,\r\n  \u0027EMAIL_USER\u0027,\r\n  \u0027EMAIL_PASSWORD\u0027,\r\n  \u0027CONTACT_EMAIL_USER\u0027,\r\n  \u0027CONTACT_EMAIL_PASSWORD\u0027,\r\n  \u0027CONTACT_NOTIFICATION_EMAIL\u0027,\r\n  \u0027ADMIN_EMAIL\u0027,\r\n  \u0027ADMIN_PASSWORD\u0027,\r\n  \u0027ADMIN_DISPLAY_NAME\u0027,\r\n  \u0027ADMIN_PHONE\u0027,\r\n  \u0027ADMIN_EMAIL_2\u0027,\r\n  \u0027ADMIN_PASSWORD_2\u0027,\r\n  \u0027ADMIN_DISPLAY_NAME_2\u0027,\r\n  \u0027ADMIN_PHONE_2\u0027,\r\n  \u0027DATABASE_PATH\u0027,\r\n  \u0027PUBLIC_API_URL\u0027,\r\n  \u0027COOKIE_SAME_SITE\u0027\r\n]\r\n\u2705 Server running on port 5017\r\n\uD83D\uDCE1 Allowed Frontend URL: http://localhost:5500,http://127.0.0.1:5500,http://localhost:5173,http://127.0.0.1:5173\r\n\uD83D\uDCE7 Email configured: kadecomputerscience@gmail.com\r\n\uD83D\uDD11 App Password set: \u2705 YES\r\n",
+        "durationMs": 6291
+      }
+    ],
+    "executions": [
+      {
+        "source": "setup[0]",
+        "resolvedExecutable": "C:\\Program Files\\nodejs\\npm.CMD",
+        "args": [
+          "ci"
+        ],
+        "cwd": "C:\\Users\\kwize\\Desktop\\Project\\myportfolio\\kade-status-backend",
+        "env": {},
+        "prependPath": [],
+        "platform": "win32"
+      },
+      {
+        "source": "tests-pass",
+        "resolvedExecutable": "C:\\Program Files\\nodejs\\npm.CMD",
+        "args": [
+          "test"
+        ],
+        "cwd": "C:\\Users\\kwize\\Desktop\\Project\\myportfolio\\kade-status-backend",
+        "env": {},
+        "prependPath": [],
+        "platform": "win32"
+      },
+      {
+        "source": "health-endpoint-200",
+        "resolvedExecutable": "C:\\Program Files\\nodejs\\npm.CMD",
+        "args": [
+          "start"
+        ],
+        "cwd": "C:\\Users\\kwize\\Desktop\\Project\\myportfolio\\kade-status-backend",
+        "env": {
+          "PORT": "5017",
+          "HOST": "127.0.0.1"
+        },
+        "prependPath": [],
+        "platform": "win32"
+      }
+    ]
+  }
+}

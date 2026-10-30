@@ -21,7 +21,7 @@ The repository contains two Node.js projects:
 
 | Folder | Role | Main technology |
 | --- | --- | --- |
-| `kade-status-frontend/` | Public portfolio pages and admin dashboard | React, Vite |
+| `my-digital-status/` | Public portfolio pages and admin dashboard | React, Vite |
 | `kade-status-backend/` | API, authentication, email, SQLite database, document storage | Express, better-sqlite3, Nodemailer |
 
 The frontend is a multi-page React app. Vite serves pages such as `contact.html`, `document.html`, and `admin-login.html`, while the React app selects the page component based on the URL. In development, Vite forwards `/api` requests to the backend on port 5000. In production, the frontend host rewrites `/api/*` requests to the backend.
@@ -41,7 +41,7 @@ The backend source is organized by API area under `src/api/`; route registration
 
 ## Requirements and local setup
 
-Use Node.js 20 or later. There is no root `package.json`; install and run the frontend and backend from their own folders.
+Use Node.js 20 or later. Install and run the frontend and backend from their own folders. After installing both sets of dependencies, you can start both services together from the `myportfolio` workspace root with `npm start` (or `npm run dev`). The backend runs on port 5000 and the frontend on port 5173; press Ctrl+C to stop both. You can also use the separate-terminal setup below.
 
 1. Open one terminal in `myportfolio/kade-status-backend` and install dependencies:
 
@@ -59,7 +59,7 @@ Use Node.js 20 or later. There is no root `package.json`; install and run the fr
 
    The API listens on `http://localhost:5000` unless `PORT` is set. Leave this terminal running.
 
-4. In a second terminal, open `myportfolio/kade-status-frontend` and install/start the frontend:
+4. In a second terminal, open `myportfolio/my-digital-status` and install/start the frontend:
 
    ```powershell
    npm install
@@ -98,12 +98,16 @@ Use `.env.example` as the commented template. Copy it to `.env` for local use, r
 | `CONTACT_SMTP_HOST`, `CONTACT_SMTP_PORT`, `CONTACT_SMTP_SECURE`, `CONTACT_SMTP_FROM` | Optional SMTP overrides and sender for the contact form. |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_DISPLAY_NAME`, `ADMIN_PHONE` | Bootstrap the first admin account when that email is not already in the database. Password must be at least 5 characters for bootstrap. |
 | `ADMIN_EMAIL_2`, `ADMIN_PASSWORD_2`, `ADMIN_DISPLAY_NAME_2`, `ADMIN_PHONE_2` | Optional second bootstrap admin. Set email, password, and display name together. |
+| `SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_PASSWORD`, `SUPER_ADMIN_DISPLAY_NAME` | Optional Digital Status super-admin bootstrap. Set all three together; the password must be at least 12 characters. |
+| `MASTER_KEY` | 32-byte hexadecimal key that wraps each customer's data-encryption key. Required to store or read recruiter contact details; back it up separately from the database. |
+| `OTP_HMAC_SECRET` | Independent random secret of at least 32 characters used to hash recruiter emails and verification codes. |
+| `SESSION_SECRET` | Independent random secret of at least 32 characters used to hash recruiter session tokens. |
 | `DATABASE_PATH` | SQLite file path. Absolute paths are recommended for deployed persistent storage. Relative paths resolve from the backend folder. |
 | `STORAGE_DIR` | Root folder for uploaded profile images and PDFs. If `DATABASE_PATH` is blank, SQLite is stored here as `portfolio.sqlite`. |
 | `PUBLIC_API_URL` | Optional HTTPS backend base used to generate direct profile-image URLs. Usually leave the local example value for local development. |
 | `COOKIE_SAME_SITE` | Admin session cookie policy. `lax` is suitable for local development and the current same-origin production `/api` rewrite. |
 
-The placeholders in `.env.example` cannot deliver email or create a usable admin login. Never paste real credentials into the example file, source code, README, or chat. If an email provider rejects credentials, check its code in the backend log; a configured value being present does not mean the provider accepted it.
+Generate separate values for `MASTER_KEY`, `OTP_HMAC_SECRET`, and `SESSION_SECRET`; for example, run `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` once per key and keep the values in `.env` or the hosting provider's secret store. Losing `MASTER_KEY` makes encrypted recruiter contacts unrecoverable. The placeholders in `.env.example` cannot deliver email or create a usable admin login. Never paste real credentials into the example file, source code, README, or chat. If an email provider rejects credentials, check its code in the backend log; a configured value being present does not mean the provider accepted it.
 
 ## Database and uploaded files
 
@@ -121,6 +125,10 @@ The backend creates or updates the schema at startup. Main tables include:
 | `download_enquiries` | Visitor requests after email verification. |
 | `download_email_verifications`, `download_verification_limits`, `download_access_tokens`, `document_preview_tokens` | Temporary verification challenges, anti-abuse limits, and short-lived download or one-use preview authorization. |
 | `admin_password_resets` | Hashed, expiring password-reset tokens. |
+| `portfolios`, `portfolio_sections` | Customer-owned drafts and published portfolio content; public routes select only non-private sections. |
+| `plans`, `plan_features`, `subscriptions` | Initial Free and Professional catalog and customer subscription state. Professional remains inactive until pricing and billing are configured. |
+| `recruiter_otps`, `recruiter_sessions` | Hashed, expiring email codes and portfolio-scoped recruiter sessions. |
+| `user_keys`, `recruiter_contacts` | Customer data keys wrapped by `MASTER_KEY`; recruiter contact fields are AES-256-GCM encrypted before storage. |
 
 The existing portfolio schema is retained for the current single-owner site. New platform-account tables are managed by numbered SQL files in `src/database/migrations/`; the backend applies each migration once at startup and records it in `schema_migrations`. Do not edit an applied migration; add the next numbered file instead.
 
@@ -174,8 +182,8 @@ The first action alone is only a browser-side draft. **Restore defaults** intent
 
 ### Shared language and phone controls
 
-- The frontend keeps the shared language selector and translations in `kade-status-frontend/src/components/LanguageSelector.jsx` and `src/context/LanguageContext.jsx`. English, French, and Kiswahili are available. Visitor and admin preferences are saved separately in browser local storage, so changing one does not change the other.
-- The shared phone field is in `kade-status-frontend/src/components/PhoneNumberField.jsx` and is used in the contact form, document request form, and admin homepage contact-phone setting. It offers international country calling codes, displays country names in the selected language, and sends numbers in E.164 format.
+- The frontend keeps the shared language selector and translations in `my-digital-status/src/components/LanguageSelector.jsx` and `my-digital-status/src/context/LanguageContext.jsx`. English, French, and Kiswahili are available. Visitor and admin preferences are saved separately in browser local storage, so changing one does not change the other.
+- The shared phone field is in `my-digital-status/src/components/PhoneNumberField.jsx` and is used in the contact form, document request form, and admin homepage contact-phone setting. It offers international country calling codes, displays country names in the selected language, and sends numbers in E.164 format.
 - The country selection applies only to phone-number input; it does not limit website visitors by country or IP address. The frontend and backend validate the international number before use. A valid number format does not prove that the number is active or reachable. Changing the published contact number also updates the footer call link and WhatsApp link.
 - The language selector translates the interface text that has translations in the language catalog. Admin-authored homepage copy, document titles, and other visitor-provided content remain as entered; they are not automatically translated.
 
@@ -184,6 +192,7 @@ The first action alone is only a browser-side draft. **Restore defaults** intent
 All API routes are mounted beneath `/api`. Authenticated routes require the admin session cookie or supported bearer session token.
 The API applies a shared limit of 600 requests per IP in a 15-minute window. Platform account endpoints add a second limit of 10 requests per IP in the same window.
 The existing `/api/auth` routes remain for portfolio administrators. New customer accounts use `/api/platform-auth`, with bcrypt password hashes, verified email, and an HttpOnly session cookie.
+The Digital Status dashboard is available at `platform-dashboard.html`; public portfolios use `/u/:slug`. This SaaS experience is separate from the existing single-owner portfolio site and admin pages.
 
 | Method and path | Access | Purpose |
 | --- | --- | --- |
@@ -211,6 +220,19 @@ The existing `/api/auth` routes remain for portfolio administrators. New custome
 | `POST /api/platform-auth/forgot-password` | Public | Email a one-time password-reset link without revealing whether an account exists. |
 | `POST /api/platform-auth/reset-password` | Public | Change a password and revoke every existing session. |
 | `GET /api/platform-auth/me` | Platform user | Return the current customer account; administrator routes reject platform customer sessions. |
+| `GET /api/portfolios` | Customer | List the signed-in customer's portfolios. |
+| `POST /api/portfolios` | Customer | Create a draft portfolio with a unique, reserved-word-checked slug. |
+| `GET /api/portfolios/slugs/check?slug=...` | Customer | Check whether a shareable slug is available. |
+| `GET`, `PUT`, `DELETE /api/portfolios/:portfolioId` | Portfolio owner | Read, update, or delete an owned portfolio; other owners receive 404. |
+| `PUT /api/portfolios/:portfolioId/sections` | Portfolio owner | Save section data, ordering, and public/private visibility. HTML is stripped from text and links must use HTTPS. |
+| `PUT /api/portfolios/:portfolioId/publish` | Portfolio owner | Publish a portfolio. |
+| `PUT /api/portfolios/:portfolioId/unpublish` | Portfolio owner | Return a portfolio to draft. |
+| `GET /api/portfolios/:portfolioId/leads` | Portfolio owner | Read only that owner's recruiter leads; platform super-admins are denied. |
+| `GET /api/public/:slug` | Public | Return published public sections only. Drafts return 404. |
+| `POST /api/public/:slug/recruiter/request-otp` | Public | Email a short-lived access code to the recruiter. |
+| `POST /api/public/:slug/recruiter/verify-otp` | Public | Verify the code (five attempts maximum) and issue a portfolio-scoped HttpOnly session. |
+| `GET /api/public/:slug/full` | Verified recruiter | Return private sections only after server-side session verification. |
+| `POST /api/public/:slug/recruiter/contact` | Verified recruiter | Store contact details encrypted and associate them with the portfolio owner. |
 | `GET /api/documents` | Public | List published CV/document/certificate metadata. |
 | `POST /api/documents/cv` | Admin | Publish a CV PDF and metadata. |
 | `POST /api/documents/certificates` | Admin | Publish a certificate PDF and metadata. |
@@ -224,6 +246,8 @@ The existing `/api/auth` routes remain for portfolio administrators. New custome
 | `POST /api/downloads/file-failed` | Public | Report a failed download so its status can be updated. |
 | `GET /api/downloads` | Admin | List visitor download requests. |
 | `DELETE /api/downloads/:downloadId` | Admin | Delete a visitor request and its associated tokens. |
+
+The Digital Status implementation currently covers account authentication, customer portfolio editing/publishing, public-only portfolio responses, recruiter email verification, and encrypted owner-scoped recruiter leads. Customer document upload and signed CV delivery, inquiries/export, paid checkout/webhooks and subscription jobs, SaaS super-admin workflows, custom domains, and legal/launch operations from the roadmap are not implemented yet. Do not treat the inactive Professional plan as purchasable.
 
 The contact JSON body is:
 
@@ -252,18 +276,18 @@ npm run setup:check
 npm run db:inspect
 ```
 
-Frontend checks from `my-digital-status-frontend`:
+Frontend checks from `my-digital-status`:
 
 ```powershell
 npm test
 npm run build
 ```
 
-The frontend build writes static assets to `my-digital-status-frontend/dist`. Its Vite configuration also generates page shells for the public and admin URLs. Deploy the built `dist` folder as the static site.
+The frontend build writes static assets to `my-digital-status/dist`. Its Vite configuration also generates page shells for the public and admin URLs. Deploy the built `dist` folder as the static site.
 
 ### Current Render layout
 
-The frontend and backend can stay in separate GitHub repositories and Render services. The frontend repository's `render.yaml` builds the static site and rewrites `/api/*` to `https://kade-status-backend-e1th.onrender.com/api/*`. This backend repository's `render.yaml` builds and starts the API and checks `/api/health`.
+The frontend and backend can stay in separate GitHub repositories and Render services. The frontend repository's `render.yaml` builds the static site and rewrites `/api/*` to `https://kade-status-backend-e1th.onrender.com/api/*`. This backend repository's `render.yaml` builds and starts the API and checks `/api/health`. For shareable `/u/:slug` pages, configure the static host to serve the frontend app shell for `/u/*` paths while preserving the original browser URL.
 
 For the backend Render Web Service, connect the backend repository, leave **Root Directory** blank when its root contains this `package.json`, use `npm ci` as the build command, and `npm start` as the start command. `nodemailer` is a production dependency in both `package.json` and `package-lock.json`, so `npm ci` from this folder installs it. The mailer loads Nodemailer's CommonJS export explicitly to avoid a startup crash if the deployed package is missing its ESM entry file. If the runtime log still says Nodemailer is missing, inspect the latest **build** log and confirm it ran `npm ci` in this repository and branch; then redeploy with a cleared build cache.
 

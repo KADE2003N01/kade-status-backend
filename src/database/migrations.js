@@ -48,6 +48,24 @@ export function runMigrations(database, directory = migrationsDirectory) {
     const sql = readFileSync(path.join(directory, migration.filename), 'utf8');
     try {
       database.transaction(() => {
+        if (migration.version === 3) {
+          const existingPortfolios = database.prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'portfolios'"
+          ).get();
+          if (existingPortfolios) {
+            const columns = new Set(database.pragma('table_info(portfolios)').map((column) => column.name));
+            if (!columns.has('owner_user_id')) {
+              if (!columns.has('owner_id')) {
+                throw new Error('The existing portfolios table has an unsupported schema.');
+              }
+              const { count } = database.prepare('SELECT COUNT(*) AS count FROM portfolios').get();
+              if (count > 0) {
+                throw new Error('Legacy portfolio records must be migrated before applying the platform portfolio schema.');
+              }
+              database.exec('DROP TABLE portfolios');
+            }
+          }
+        }
         database.exec(sql);
         recordMigration.run(migration.version, migration.filename);
       })();
