@@ -1,14 +1,16 @@
 import { createHash } from 'node:crypto';
 import database from '../database/database.js';
+import { getPlatformSessionUser } from './platform-auth.js';
 
 export const SESSION_COOKIE = 'kade_admin_session';
-const SESSION_DURATION_MS = 8 * 60 * 60 * 1000;
+export const SESSION_DURATION_MS = 8 * 60 * 60 * 1000;
+export const REMEMBERED_SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 
 export function hashSessionToken(token) {
   return createHash('sha256').update(token).digest('hex');
 }
 
-function getCookieOptions() {
+export function getSessionCookieOptions(maxAge = SESSION_DURATION_MS) {
   const configuredSameSite = (process.env.COOKIE_SAME_SITE || '').toLowerCase();
   const isProduction = process.env.NODE_ENV === 'production';
   const sameSite = ['strict', 'lax', 'none'].includes(configuredSameSite)
@@ -19,12 +21,12 @@ function getCookieOptions() {
     secure: sameSite === 'none' || isProduction,
     sameSite,
     path: '/api',
-    maxAge: SESSION_DURATION_MS
+    maxAge
   };
 }
 
 export function clearSessionCookie(res) {
-  const { maxAge, ...options } = getCookieOptions();
+  const { maxAge, ...options } = getSessionCookieOptions();
   res.clearCookie(SESSION_COOKIE, options);
 }
 
@@ -54,6 +56,9 @@ function getSessionUser(req) {
 export function requireAdmin(req, res, next) {
   const user = getSessionUser(req);
   if (!user) {
+    if (getPlatformSessionUser(req)) {
+      return res.status(403).json({ success: false, error: 'A platform customer account cannot access administrator routes.' });
+    }
     clearSessionCookie(res);
     return res.status(401).json({ success: false, error: 'Authentication required.' });
   }

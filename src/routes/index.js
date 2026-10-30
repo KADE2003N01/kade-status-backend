@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import authRoutes from '../api/Auth/auth.routes.js';
+import platformAuthRoutes from '../api/PlatformAuth/platform-auth.routes.js';
 import contactRoutes from '../api/Contact/contact.routes.js';
 import documentRoutes from '../api/Documents/documents.routes.js';
 import downloadRoutes from '../api/Downloads/downloads.routes.js';
@@ -12,6 +13,7 @@ const router = Router();
 
 router.use('/contact', contactRoutes);
 router.use('/auth', authRoutes);
+router.use('/platform-auth', platformAuthRoutes);
 router.use('/platform-owner', platformOwnerRoutes);
 router.use('/support-requests', supportRoutes);
 router.use('/messages', messageRoutes);

@@ -113,6 +113,7 @@ The backend creates or updates the schema at startup. Main tables include:
 
 | Table | Data stored |
 | --- | --- |
+| `users`, `sessions`, `email_verifications`, `password_resets` | Additive account and session foundation for the roadmap platform; separate from current portfolio-admin accounts. |
 | `admin_users`, `admin_sessions` | Admin accounts and active sessions. Passwords are stored as salted hashes. |
 | `portfolio_settings` | Published homepage content as JSON. |
 | `contact_messages` | Successfully emailed contact submissions: name, email, phone, message, and timestamp. |
@@ -120,6 +121,8 @@ The backend creates or updates the schema at startup. Main tables include:
 | `download_enquiries` | Visitor requests after email verification. |
 | `download_email_verifications`, `download_verification_limits`, `download_access_tokens`, `document_preview_tokens` | Temporary verification challenges, anti-abuse limits, and short-lived download or one-use preview authorization. |
 | `admin_password_resets` | Hashed, expiring password-reset tokens. |
+
+The existing portfolio schema is retained for the current single-owner site. New platform-account tables are managed by numbered SQL files in `src/database/migrations/`; the backend applies each migration once at startup and records it in `schema_migrations`. Do not edit an applied migration; add the next numbered file instead.
 
 Contact messages include personal information. They are included in the owner notification email and saved to SQLite after the email delivery call completes. There is currently no admin page or API endpoint for browsing the `contact_messages` table; `db:inspect` shows only its row count.
 
@@ -179,6 +182,8 @@ The first action alone is only a browser-side draft. **Restore defaults** intent
 ## API reference
 
 All API routes are mounted beneath `/api`. Authenticated routes require the admin session cookie or supported bearer session token.
+The API applies a shared limit of 600 requests per IP in a 15-minute window. Platform account endpoints add a second limit of 10 requests per IP in the same window.
+The existing `/api/auth` routes remain for portfolio administrators. New customer accounts use `/api/platform-auth`, with bcrypt password hashes, verified email, and an HttpOnly session cookie.
 
 | Method and path | Access | Purpose |
 | --- | --- | --- |
@@ -199,6 +204,13 @@ All API routes are mounted beneath `/api`. Authenticated routes require the admi
 | `POST /api/auth/admin-users/:adminId/password-reset` | Admin | Email a password-reset link to the selected account. |
 | `POST /api/auth/password-reset/request` | Public | Request an account recovery email. |
 | `POST /api/auth/password-reset/confirm` | Public | Confirm a valid recovery token and change password. |
+| `POST /api/platform-auth/signup` | Public | Create a customer account and email a one-time verification link. |
+| `POST /api/platform-auth/verify-email` | Public | Verify an account email using its expiring token. |
+| `POST /api/platform-auth/login` | Public | Sign in a verified customer or platform super-admin. |
+| `POST /api/platform-auth/logout` | Public | Revoke the current platform session. |
+| `POST /api/platform-auth/forgot-password` | Public | Email a one-time password-reset link without revealing whether an account exists. |
+| `POST /api/platform-auth/reset-password` | Public | Change a password and revoke every existing session. |
+| `GET /api/platform-auth/me` | Platform user | Return the current customer account; administrator routes reject platform customer sessions. |
 | `GET /api/documents` | Public | List published CV/document/certificate metadata. |
 | `POST /api/documents/cv` | Admin | Publish a CV PDF and metadata. |
 | `POST /api/documents/certificates` | Admin | Publish a certificate PDF and metadata. |
@@ -257,7 +269,7 @@ For the backend Render Web Service, connect the backend repository, leave **Root
 
 Set production environment variables in the backend service's Render dashboard, not in GitHub. At minimum, set `FRONTEND_URL` to the exact deployed frontend origin. Add `EMAIL_USER` and a Gmail App Password as `EMAIL_PASSWORD` for account recovery and verification email; add contact-specific settings if the contact form uses another mailbox. Missing email settings do not prevent the API from starting, but email features will return a configuration error until they are set. Keep the backend's persistent disk and its `STORAGE_DIR`/`DATABASE_PATH` settings configured separately so deploys preserve uploaded files and database data.
 
-The backend allows the known production frontend origin plus local development origins. Set `FRONTEND_URL` when using another frontend domain. Keep `FRONTEND_URL` exact and comma-separated; do not use `*` for authenticated requests.
+The backend allows exact origins listed in `FRONTEND_URL`. Local development origins are allowed only outside production. In production, set `FRONTEND_URL` to the exact deployed frontend origin; comma-separated origins are supported, and wildcard origins are not.
 
 When changing persistent database paths, preserve the previous database and uploaded files until the new location is confirmed. A redeploy cannot recover data that was already erased from an ephemeral filesystem.
 

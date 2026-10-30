@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { after, test } from 'node:test';
 import { existsSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,7 +13,7 @@ process.env.STORAGE_DIR = storageDirectory;
 process.env.ADMIN_EMAIL = 'admin-test@example.com';
 process.env.ADMIN_PASSWORD = 'test5';
 process.env.ADMIN_DISPLAY_NAME = 'Database Test Admin';
-process.env.FRONTEND_URL = 'http://localhost:5500';
+process.env.FRONTEND_URL = 'http://localhost:5500,https://david-portifolio.onrender.com';
 process.env.NODE_ENV = 'test';
 process.env.EMAIL_USER = '';
 process.env.EMAIL_PASSWORD = '';
@@ -88,7 +89,7 @@ test('Vite frontend origin can make credentialed API requests', async () => {
   assert.equal(response.headers.get('access-control-allow-credentials'), 'true');
 });
 
-test('deployed frontend origin can make credentialed API requests', async () => {
+test('configured deployed frontend origin can make credentialed API requests', async () => {
   const response = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'OPTIONS',
     headers: {
@@ -100,6 +101,75 @@ test('deployed frontend origin can make credentialed API requests', async () => 
   assert.equal(response.status, 204);
   assert.equal(response.headers.get('access-control-allow-origin'), 'https://david-portifolio.onrender.com');
   assert.equal(response.headers.get('access-control-allow-credentials'), 'true');
+});
+
+test('remember me issues a persistent 30-day session without storing a password', async () => {
+  const startedAt = Date.now();
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
+    ...requestOptions,
+    method: 'POST',
+    body: JSON.stringify({
+      email: 'admin-test@example.com',
+      password: 'test5',
+      rememberMe: true
+    })
+  });
+  assert.equal(login.status, 200);
+  const setCookie = login.headers.get('set-cookie');
+  assert.match(setCookie, /max-age=2592000/i);
+  const token = setCookie.split(';', 1)[0].split('=').slice(1).join('=');
+  const tokenHash = createHash('sha256').update(token).digest('hex');
+  const session = database.prepare('SELECT expires_at FROM admin_sessions WHERE token_hash = ?').get(tokenHash);
+  assert.ok(session.expires_at >= startedAt + 30 * 24 * 60 * 60 * 1000 - 1000);
+
+  const currentUser = await fetch(`${baseUrl}/api/auth/me`, {
+    headers: { ...requestOptions.headers, Cookie: setCookie.split(';', 1)[0] }
+  });
+  assert.equal(currentUser.status, 200);
+
+  const logout = await fetch(`${baseUrl}/api/auth/logout`, {
+    ...requestOptions,
+    method: 'POST',
+    headers: { ...requestOptions.headers, Cookie: setCookie.split(';', 1)[0] }
+  });
+  assert.equal(logout.status, 200);
+});
+
+test('public document previews require email verification', async () => {
+  const directPreview = await fetch(`${baseUrl}/api/downloads/preview/cv`, {
+    headers: { Origin: 'http://localhost:5500' }
+  });
+  assert.equal(directPreview.status, 404);
+
+  const challenge = await startDownloadVerification({
+    documentId: 'cv',
+    name: 'Preview Visitor',
+    email: 'verified-preview@example.com',
+    reason: 'I need to review this document for a portfolio application.',
+    purpose: 'preview',
+    consent: true
+  });
+  const invalidAttempt = await completeDownloadVerification(challenge.challengeId, '000000');
+  assert.equal(invalidAttempt.status, 400);
+
+  const verification = await completeDownloadVerification(challenge.challengeId);
+  assert.equal(verification.status, 201);
+  const authorization = await verification.json();
+  const preview = await fetch(`${baseUrl}/api/downloads/preview`, {
+    ...requestOptions,
+    method: 'POST',
+    body: JSON.stringify({ token: authorization.downloadToken })
+  });
+  assert.equal(preview.status, 200);
+  assert.match(preview.headers.get('content-disposition'), /^inline;/);
+  assert.ok((await preview.arrayBuffer()).byteLength > 100_000);
+
+  const reusedAuthorization = await fetch(`${baseUrl}/api/downloads/preview`, {
+    ...requestOptions,
+    method: 'POST',
+    body: JSON.stringify({ token: authorization.downloadToken })
+  });
+  assert.equal(reusedAuthorization.status, 403);
 });
 
 test('homepage content accepts optional fields and defaults omitted fields', () => {
@@ -360,9 +430,8 @@ test('admin credentials issue a revocable session and the admin name comes from 
   const publicPreview = await fetch(`${baseUrl}/api/downloads/preview/cv`, {
     headers: { Origin: 'http://localhost:5500' }
   });
-  assert.equal(publicPreview.status, 200);
-  assert.match(publicPreview.headers.get('content-disposition'), /^inline;/);
-  assert.match(publicPreview.headers.get('content-type'), /^application\/pdf/);
+  assert.equal(publicPreview.status, 404);
+  assert.equal((await publicPreview.json()).success, false);
 
   const missingPublicPreview = await fetch(`${baseUrl}/api/downloads/preview/not-a-published-document`, {
     headers: { Origin: 'http://localhost:5500' }
@@ -517,9 +586,7 @@ test('admin credentials issue a revocable session and the admin name comes from 
     method: 'POST',
     body: JSON.stringify({ token: downloadToken })
   });
-  assert.equal(previewResponse.status, 200);
-  assert.match(previewResponse.headers.get('content-disposition'), /^inline;/);
-  assert.ok((await previewResponse.arrayBuffer()).byteLength > 100_000);
+  assert.equal(previewResponse.status, 403);
   const previewedDownloads = await fetch(`${baseUrl}/api/downloads`, {
     headers: { ...requestOptions.headers, Cookie: cookie }
   });

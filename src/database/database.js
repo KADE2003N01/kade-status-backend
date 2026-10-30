@@ -2,7 +2,9 @@ import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { randomBytes, scryptSync } from 'node:crypto';
+import bcrypt from 'bcryptjs';
 import { backendDirectory, getDatabasePath } from '../config/paths.js';
+import { runMigrations } from './migrations.js';
 
 const databasePath = getDatabasePath();
 mkdirSync(path.dirname(databasePath), { recursive: true });
@@ -244,6 +246,8 @@ database.exec(`
   );
 `);
 
+runMigrations(database);
+
 const downloadEnquiryColumns = new Set(
   database.prepare('PRAGMA table_info(download_enquiries)').all().map((column) => column.name)
 );
@@ -389,6 +393,32 @@ if (configuredPlatformOwnerEmail) {
     if (!roles.includes('platform_owner')) roles.push('platform_owner');
     database.prepare("UPDATE admin_users SET role = 'platform_owner', roles_json = ?, status = 'active' WHERE id = ?")
       .run(JSON.stringify(roles), platformOwner.id);
+  }
+}
+
+const superAdminEmail = process.env.SUPER_ADMIN_EMAIL?.trim().toLowerCase();
+const superAdminPassword = process.env.SUPER_ADMIN_PASSWORD;
+const superAdminDisplayName = process.env.SUPER_ADMIN_DISPLAY_NAME?.trim();
+if (superAdminEmail || superAdminPassword || superAdminDisplayName) {
+  if (!superAdminEmail || !superAdminPassword || !superAdminDisplayName) {
+    throw new Error('Set SUPER_ADMIN_EMAIL, SUPER_ADMIN_PASSWORD, and SUPER_ADMIN_DISPLAY_NAME together.');
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(superAdminEmail) || superAdminPassword.length < 12) {
+    throw new Error('SUPER_ADMIN_EMAIL must be valid and SUPER_ADMIN_PASSWORD must be at least 12 characters.');
+  }
+
+  const existingSuperAdmin = database.prepare('SELECT id FROM users WHERE email = ?').get(superAdminEmail);
+  if (!existingSuperAdmin) {
+    database.prepare(`
+      INSERT INTO users (email, display_name, password_hash, role, status, email_verified_at)
+      VALUES (?, ?, ?, 'super_admin', 'active', CURRENT_TIMESTAMP)
+    `).run(superAdminEmail, superAdminDisplayName, bcrypt.hashSync(superAdminPassword, 12));
+  } else {
+    database.prepare(`
+      UPDATE users SET role = 'super_admin', status = 'active',
+        email_verified_at = COALESCE(email_verified_at, CURRENT_TIMESTAMP),
+        updated_at = CURRENT_TIMESTAMP WHERE id = ?
+    `).run(existingSuperAdmin.id);
   }
 }
 

@@ -374,42 +374,6 @@ router.post('/verify', async (req, res, next) => {
   }
 });
 
-router.get('/preview/:documentId', async (req, res, next) => {
-  try {
-    const document = database.prepare(`
-      SELECT title, filename, stored_filename
-      FROM portfolio_documents WHERE document_id = ?
-    `).get(req.params.documentId);
-    if (!document) {
-      return res.status(404).json({ success: false, error: 'This document is no longer available.' });
-    }
-
-    const filePath = resolveWritablePath('private-documents', document.stored_filename);
-    try {
-      await access(filePath);
-    } catch {
-      return res.status(404).json({ success: false, error: 'This document is no longer available.' });
-    }
-    res.set({
-      'Cache-Control': 'private, no-store',
-      'X-Content-Type-Options': 'nosniff'
-    });
-    return res.sendFile(filePath, {
-      headers: {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `inline; filename="${document.filename}"`
-      }
-    }, (error) => {
-      if (error) {
-        if (!res.headersSent) return next(error);
-        console.error(`Could not preview public document "${document.title}":`, error);
-      }
-    });
-  } catch (error) {
-    return next(error);
-  }
-});
-
 router.post('/preview', (req, res, next) => {
   try {
     const token = typeof req.body?.token === 'string' ? req.body.token : '';

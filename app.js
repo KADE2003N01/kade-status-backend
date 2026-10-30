@@ -1,11 +1,18 @@
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import apiRoutes from './src/routes/index.js';
 
 const app = express();
+const isProduction = process.env.NODE_ENV === 'production';
 
-// Middleware
+if (isProduction) app.set('trust proxy', 1);
+
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' }
+}));
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -23,27 +30,49 @@ const localDevelopmentOrigins = [
   'http://localhost:4173',
   'http://127.0.0.1:4173'
 ];
-const knownFrontendOrigins = [
-  'https://my-digital-status.onrender.com',
-  'https://david-portifolio.onrender.com',
-  ...localDevelopmentOrigins
-];
 const configuredOrigins = (process.env.FRONTEND_URL || '')
   .split(',')
   .map((origin) => origin.trim())
-  .filter((origin) => origin && origin !== '*');
-const allowedOrigins = [...new Set([...knownFrontendOrigins, ...configuredOrigins])];
+  .filter(Boolean);
+for (const origin of configuredOrigins) {
+  let parsedOrigin;
+  try {
+    parsedOrigin = new URL(origin);
+  } catch {
+    throw new Error('FRONTEND_URL must contain exact HTTP or HTTPS origins separated by commas.');
+  }
+  if (!['http:', 'https:'].includes(parsedOrigin.protocol) || parsedOrigin.origin !== origin) {
+    throw new Error('FRONTEND_URL must contain exact HTTP or HTTPS origins without paths or trailing slashes.');
+  }
+}
+const allowedOrigins = new Set([
+  ...configuredOrigins,
+  ...(!isProduction ? localDevelopmentOrigins : [])
+]);
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.has(origin)) {
       callback(null, true);
     } else {
-      callback(new Error(`CORS Error: Origin ${origin} not allowed`));
+      const error = new Error('Origin is not allowed by CORS.');
+      error.status = 403;
+      callback(error);
     }
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   credentials: true
+}));
+
+app.use('/api', rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 600,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  handler: (req, res) => res.status(429).json({
+    success: false,
+    error: 'Too many requests. Please try again later.'
+  })
 }));
 
 // Request Logger
@@ -69,10 +98,15 @@ app.use((req, res) => {
 
 // Global Error Handler
 app.use((err, req, res, next) => {
-  console.error('❌ Server Error:', err.message);
-  res.status(err.status || 500).json({
+  const status = Number.isInteger(err.status) && err.status >= 400 && err.status < 600
+    ? err.status
+    : 500;
+  console.error('Server error:', err.message);
+  res.status(status).json({
     success: false,
-    error: err.message || 'Internal server error'
+    error: status >= 500 && isProduction
+      ? 'Internal server error'
+      : err.message || 'Internal server error'
   });
 });
 

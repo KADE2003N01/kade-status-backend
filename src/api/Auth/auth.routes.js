@@ -2,12 +2,20 @@ import { createHash, randomBytes, scrypt, scryptSync, timingSafeEqual } from 'no
 import { promisify } from 'node:util';
 import express from 'express';
 import database from '../../database/database.js';
-import { clearSessionCookie, hashSessionToken, requireAdmin, requireAdminRole, SESSION_COOKIE } from '../../verification/admin-auth.js';
+import {
+  clearSessionCookie,
+  hashSessionToken,
+  REMEMBERED_SESSION_DURATION_MS,
+  requireAdmin,
+  requireAdminRole,
+  SESSION_COOKIE,
+  SESSION_DURATION_MS,
+  getSessionCookieOptions
+} from '../../verification/admin-auth.js';
 import { sendAdminPasswordLink } from '../../services/admin-password-links.js';
 
 const router = express.Router();
 const scryptAsync = promisify(scrypt);
-const SESSION_DURATION_MS = 8 * 60 * 60 * 1000;
 
 function auditPasswordAction(actorId, targetId, action, details = {}) {
   database.prepare('INSERT INTO platform_admin_audit (actor_id, target_id, action, details_json) VALUES (?, ?, ?, ?)')
@@ -17,24 +25,6 @@ function auditPasswordAction(actorId, targetId, action, details = {}) {
 function makePasswordHash(password) {
   const salt = randomBytes(16).toString('hex');
   return `${salt}:${scryptSync(password, salt, 64).toString('hex')}`;
-}
-
-function getCookieOptions() {
-  const configuredSameSite = (process.env.COOKIE_SAME_SITE || '').toLowerCase();
-  const isProduction = process.env.NODE_ENV === 'production';
-  // The admin frontend and API are served from different domains (e.g. two
-  // separate onrender.com apps), so the session cookie must be SameSite=None
-  // in production or browsers will silently drop it after login.
-  const sameSite = ['strict', 'lax', 'none'].includes(configuredSameSite)
-    ? configuredSameSite
-    : (isProduction ? 'none' : 'lax');
-  return {
-    httpOnly: true,
-    secure: sameSite === 'none' || isProduction,
-    sameSite,
-    path: '/api',
-    maxAge: SESSION_DURATION_MS
-  };
 }
 
 router.post('/login', async (req, res, next) => {
@@ -49,6 +39,9 @@ router.post('/login', async (req, res, next) => {
 
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const sessionDuration = req.body?.rememberMe === true
+      ? REMEMBERED_SESSION_DURATION_MS
+      : SESSION_DURATION_MS;
     if (!email || !password || email.length > 254 || password.length > 1024) {
       return res.status(400).json({ success: false, error: 'Enter your email and password.' });
     }
@@ -76,13 +69,13 @@ router.post('/login', async (req, res, next) => {
     database.prepare('DELETE FROM admin_sessions WHERE expires_at <= ?').run(Date.now());
 
     const token = randomBytes(32).toString('base64url');
-    const expiresAt = Date.now() + SESSION_DURATION_MS;
+    const expiresAt = Date.now() + sessionDuration;
     database.prepare(`
       INSERT INTO admin_sessions (token_hash, user_id, expires_at, created_at)
       VALUES (?, ?, ?, ?)
     `).run(hashSessionToken(token), user.id, expiresAt, Date.now());
 
-    res.cookie(SESSION_COOKIE, token, getCookieOptions());
+    res.cookie(SESSION_COOKIE, token, getSessionCookieOptions(sessionDuration));
 
     const homepageRow = database.prepare('SELECT value_json FROM portfolio_settings WHERE setting_key = ?').get('homepage');
     if (homepageRow) {
