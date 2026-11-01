@@ -48,11 +48,11 @@ export function readHidden(prompt) {
   });
 }
 
-export async function promptPasswordPair() {
-  const password = await readHidden(`Password (minimum ${MIN_ADMIN_PASSWORD_LENGTH} characters; input hidden): `);
+export async function promptPasswordPair(minimumLength = MIN_ADMIN_PASSWORD_LENGTH) {
+  const password = await readHidden(`Password (minimum ${minimumLength} characters; input hidden): `);
   if (password === null) return null;
-  if (password.length < MIN_ADMIN_PASSWORD_LENGTH) {
-    throw new Error(`Choose a password with at least ${MIN_ADMIN_PASSWORD_LENGTH} characters.`);
+  if (password.length < minimumLength) {
+    throw new Error(`Choose a password with at least ${minimumLength} characters.`);
   }
 
   const confirmation = await readHidden('Confirm password (input hidden): ');

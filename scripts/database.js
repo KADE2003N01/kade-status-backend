@@ -22,6 +22,7 @@ export function openConfiguredDatabase({ readonly = true } = {}) {
       if (!columns.has('phone')) database.exec('ALTER TABLE admin_users ADD COLUMN phone TEXT');
       if (!columns.has('role')) database.exec("ALTER TABLE admin_users ADD COLUMN role TEXT NOT NULL DEFAULT 'portfolio_owner'");
       if (!columns.has('status')) database.exec("ALTER TABLE admin_users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
+      if (!columns.has('roles_json')) database.exec("ALTER TABLE admin_users ADD COLUMN roles_json TEXT NOT NULL DEFAULT '[]'");
     }
   }
   return database;

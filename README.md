@@ -82,6 +82,14 @@ npm run admin:list
 
 `admin:add` asks for an email, display name, optional phone, and a password. Password input is hidden and the CLI requires at least 8 characters. If there are no tables yet, start the backend before running this command.
 
+### Adding a platform super admin
+
+The admin portal stores administrators in `admin_users`; super-admin access is the `platform_owner` role in that same table. You do not need a second super-admin table. From the backend folder, run `npm run super-admin:add` to create a new platform owner with a hidden password prompt (minimum 12 characters), or `npm run super-admin:promote` to grant that role to an existing admin without changing its password. Both commands use the database selected by `DATABASE_PATH` (or the local default). Run `npm run setup:check` first to confirm which database you are changing.
+
+Use `npm run admin:list` to list account IDs, emails, roles, status, phone, and display names without showing password hashes. `npm run admin:edit` interactively changes an admin's display name or phone while preserving its role and password. `npm run admin:change-email` changes its email, checks for duplicates, and revokes that admin's sessions and pending password-reset links. `npm run admin:reset-password` sets a new hidden password and revokes sessions. These commands operate only on the database selected in the environment where they are run.
+
+`SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_PASSWORD`, and `SUPER_ADMIN_DISPLAY_NAME` seed a different account in the Digital Status `users` table. That SaaS account is not an admin-portal account and does not sign in through the portfolio admin login.
+
 ## Environment configuration
 
 Use `.env.example` as the commented template. Copy it to `.env` for local use, replace the example email/password values, and restart the backend after editing it. On a hosting provider, set these values in that service's private environment settings instead of committing `.env`.
@@ -98,7 +106,7 @@ Use `.env.example` as the commented template. Copy it to `.env` for local use, r
 | `CONTACT_SMTP_HOST`, `CONTACT_SMTP_PORT`, `CONTACT_SMTP_SECURE`, `CONTACT_SMTP_FROM` | Optional SMTP overrides and sender for the contact form. |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_DISPLAY_NAME`, `ADMIN_PHONE` | Bootstrap the first admin account when that email is not already in the database. Password must be at least 5 characters for bootstrap. |
 | `ADMIN_EMAIL_2`, `ADMIN_PASSWORD_2`, `ADMIN_DISPLAY_NAME_2`, `ADMIN_PHONE_2` | Optional second bootstrap admin. Set email, password, and display name together. |
-| `SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_PASSWORD`, `SUPER_ADMIN_DISPLAY_NAME` | Optional Digital Status super-admin bootstrap. Set all three together; the password must be at least 12 characters. |
+| `SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_PASSWORD`, `SUPER_ADMIN_DISPLAY_NAME` | Optional Digital Status SaaS super-admin bootstrap in the `users` table. This account is separate from the portfolio admin portal; set all three together and use a password of at least 12 characters. |
 | `MASTER_KEY` | 32-byte hexadecimal key that wraps each customer's data-encryption key. Required to store or read recruiter contact details; back it up separately from the database. |
 | `OTP_HMAC_SECRET` | Independent random secret of at least 32 characters used to hash recruiter emails and verification codes. |
 | `SESSION_SECRET` | Independent random secret of at least 32 characters used to hash recruiter session tokens. |
@@ -151,9 +159,13 @@ These are project-specific npm shortcuts in this backend's `package.json`; they 
 | --- | --- |
 | `npm start` | Starts the backend server. |
 | `npm run setup:check` | Reports the backend folder, configured database path, and whether the database contains admins. Does not print secrets. |
-| `npm run admin:list` | Lists admin IDs, emails, display names, and creation dates; does not display password hashes. |
+| `npm run admin:list` | Lists admin IDs, emails, roles, status, phone, display names, and creation dates; does not display password hashes. |
 | `npm run admin:add` | Interactively adds an admin. Password entry is hidden. |
 | `npm run setup:admin` | Alias for `admin:add`. |
+| `npm run super-admin:add` | Creates a platform owner in `admin_users` with all admin roles. |
+| `npm run super-admin:promote` | Promotes an existing `admin_users` account to platform owner and revokes its current sessions. |
+| `npm run admin:edit` | Edits an admin's display name or phone without changing its role or password. |
+| `npm run admin:change-email` | Changes an admin's email, checks duplicates, and revokes sessions/reset links. |
 | `npm run admin:reset-password` | Changes an existing admin's password and revokes that admin's active sessions. Password entry is hidden. |
 | `npm run db:inspect` | Lists database tables and row counts, not the table contents. |
 | `npm test` | Runs the backend Node test suite. |
