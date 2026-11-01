@@ -202,10 +202,10 @@ router.post('/support-requests/respond', async (req, res, next) => {
     for (const request of requests) {
       try {
         await transporter.sendMail({
-          from: getMailFromAddress('contact'), to: request.email,
+          from: getMailFromAddress('contact'), to: request.email, replyTo: req.adminUser.email,
           subject: 'Update on your administrator support ticket',
-          text: `Hello ${request.name},\n\n${body}\n\nPlatform support`,
-          html: `<div style="font-family:Arial,sans-serif;color:#24324a;line-height:1.6"><p>Hello ${escapeHtml(request.name)},</p><p>${escapeHtml(body).replace(/\r?\n/g, '<br>')}</p><p>Platform support</p></div>`
+          text: `Hello ${request.name},\n\n${body}\n\nReply to this email to continue the conversation.\n\nPlatform support`,
+          html: `<div style="font-family:Arial,sans-serif;color:#24324a;line-height:1.6"><p>Hello ${escapeHtml(request.name)},</p><p>${escapeHtml(body).replace(/\r?\n/g, '<br>')}</p><p>Reply to this email to continue the conversation.</p><p>Platform support</p></div>`
         });
         database.prepare('INSERT INTO admin_support_request_responses (request_id, responder_id, body) VALUES (?, ?, ?)')
           .run(request.id, req.adminUser.id, body);

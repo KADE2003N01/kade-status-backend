@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
 import { existsSync, unlinkSync } from 'node:fs';
+import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -224,6 +225,75 @@ test('public administrator chat is shared, records read state, and only lets sen
   assert.equal(deleted.status, 200);
   const finalInbox = await request(ownerToken, '/public');
   assert.ok((await finalInbox.json()).messages.find((message) => message.id === publicMessage.id).deletedAt);
+});
+
+test('support response emails allow requesters to reply directly to the platform owner', async () => {
+  const supportRequestId = database.prepare(`INSERT INTO admin_support_requests (admin_user_id, name, email, category, message)
+    VALUES (?, 'Support Requester', 'support-requester@example.com', 'other', 'Need help with my account.')`).run(adminId).lastInsertRowid;
+  const smtpMessages = [];
+  const smtpServer = net.createServer((socket) => {
+    let buffer = '';
+    let readingMessage = false;
+    socket.write('220 localhost ESMTP\r\n');
+    socket.on('data', (chunk) => {
+      buffer += chunk.toString();
+      while (true) {
+        if (readingMessage) {
+          const endOfMessage = buffer.indexOf('\r\n.\r\n');
+          if (endOfMessage < 0) return;
+          smtpMessages.push(buffer.slice(0, endOfMessage));
+          buffer = buffer.slice(endOfMessage + 5);
+          readingMessage = false;
+          socket.write('250 Message accepted\r\n');
+          continue;
+        }
+        const lineEnd = buffer.indexOf('\r\n');
+        if (lineEnd < 0) return;
+        const line = buffer.slice(0, lineEnd);
+        buffer = buffer.slice(lineEnd + 2);
+        if (line.startsWith('EHLO')) socket.write('250-localhost\r\n250 SIZE 10485760\r\n');
+        else if (line.startsWith('HELO')) socket.write('250 localhost\r\n');
+        else if (line.startsWith('MAIL FROM:') || line.startsWith('RCPT TO:')) socket.write('250 OK\r\n');
+        else if (line === 'DATA') {
+          readingMessage = true;
+          socket.write('354 End data with <CR><LF>.<CR><LF>\r\n');
+        } else if (line === 'QUIT') {
+          socket.write('221 Bye\r\n');
+          socket.end();
+        } else socket.write('250 OK\r\n');
+      }
+    });
+  });
+  const mailSettings = ['CONTACT_EMAIL_USER', 'CONTACT_EMAIL_PASSWORD', 'CONTACT_SMTP_HOST', 'CONTACT_SMTP_PORT', 'CONTACT_SMTP_SECURE', 'CONTACT_SMTP_FROM'];
+  const previousMailSettings = Object.fromEntries(mailSettings.map((key) => [key, process.env[key]]));
+  await new Promise((resolve) => smtpServer.listen(0, '127.0.0.1', resolve));
+  const smtpPort = smtpServer.address().port;
+
+  try {
+    process.env.CONTACT_EMAIL_USER = 'smtp@example.com';
+    process.env.CONTACT_EMAIL_PASSWORD = 'smtp-test-password';
+    process.env.CONTACT_SMTP_HOST = '127.0.0.1';
+    process.env.CONTACT_SMTP_PORT = String(smtpPort);
+    process.env.CONTACT_SMTP_SECURE = 'false';
+    process.env.CONTACT_SMTP_FROM = 'support@example.com';
+
+    const response = await fetch(`${baseUrl.replace('/api/messages', '/api/platform-owner')}/support-requests/respond`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${ownerToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [supportRequestId], message: 'We have updated your account.' })
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).sent, 1);
+    assert.equal(smtpMessages.length, 1);
+    assert.match(smtpMessages[0], /reply-to: owner-messages@example\.com/i);
+    assert.match(smtpMessages[0], /Reply to this email to continue the conversation\./);
+  } finally {
+    for (const [key, value] of Object.entries(previousMailSettings)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await new Promise((resolve, reject) => smtpServer.close((error) => error ? reject(error) : resolve()));
+  }
 });
 
 test('visitor contact enquiries show in the inbox, can be resolved, and can be removed', async () => {
