@@ -5,4 +5,5 @@ data/
 !.env.example
 message-attachments/
 profile-images/
+private-documents/
 server-*.log

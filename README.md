@@ -164,6 +164,10 @@ These commands operate on the local database path resolved from that command's e
 
 ## Admin workflow and limitations
 
+### Messaging behavior
+
+The admin message center supports persistent admin conversations and message actions such as replies, attachments, reactions, and read state. The owner/admin conversation view refreshes by polling every 15 seconds. Visitor contact-form messages appear in the admin inbox, but admin replies are delivered by email; visitors do not continue those conversations in a live website chat. This is asynchronous messaging, not a real-time WhatsApp-style visitor chat.
+
 ### Homepage edits
 
 1. Open **Landing page** in the admin portal and edit the fields.
@@ -285,13 +289,17 @@ npm run build
 
 The frontend build writes static assets to `my-digital-status/dist`. Its Vite configuration also generates page shells for the public and admin URLs. Deploy the built `dist` folder as the static site.
 
-### Current Render layout
+### Production deployment and data persistence
 
-The frontend and backend can stay in separate GitHub repositories and Render services. The frontend repository's `render.yaml` builds the static site and rewrites `/api/*` to `https://kade-status-backend-e1th.onrender.com/api/*`. This backend repository's `render.yaml` builds and starts the API and checks `/api/health`. For shareable `/u/:slug` pages, configure the static host to serve the frontend app shell for `/u/*` paths while preserving the original browser URL.
+The frontend and backend are separate Node.js services. The repository does not contain Render blueprint files, so configure each service in its hosting dashboard (or add and maintain blueprints in the repositories you deploy). The static frontend must either rewrite `/api/*` to the backend's `/api/*` routes or have the frontend build variable `VITE_PORTFOLIO_API_BASE_URL` set to the backend API origin ending in `/api`. The frontend no longer guesses a hardcoded Render hostname. Without a working rewrite or build variable, API-backed features will not work on the deployed site.
+
+For the backend service, use `npm ci` and `npm start`, and configure `/api/health` as its health-check path. For shareable `/u/:slug` pages, configure the static host to serve the frontend app shell for `/u/*` while preserving the browser URL.
 
 For the backend Render Web Service, connect the backend repository, leave **Root Directory** blank when its root contains this `package.json`, use `npm ci` as the build command, and `npm start` as the start command. `nodemailer` is a production dependency in both `package.json` and `package-lock.json`, so `npm ci` from this folder installs it. The mailer loads Nodemailer's CommonJS export explicitly to avoid a startup crash if the deployed package is missing its ESM entry file. If the runtime log still says Nodemailer is missing, inspect the latest **build** log and confirm it ran `npm ci` in this repository and branch; then redeploy with a cleared build cache.
 
-Set production environment variables in the backend service's Render dashboard, not in GitHub. At minimum, set `FRONTEND_URL` to the exact deployed frontend origin. Add `EMAIL_USER` and a Gmail App Password as `EMAIL_PASSWORD` for account recovery and verification email; add contact-specific settings if the contact form uses another mailbox. Missing email settings do not prevent the API from starting, but email features will return a configuration error until they are set. Keep the backend's persistent disk and its `STORAGE_DIR`/`DATABASE_PATH` settings configured separately so deploys preserve uploaded files and database data.
+Local `.env` values are never copied to a hosting provider. Add each required key in the backend service's private environment settings, using the same names and secret values as the working local environment. At minimum, set `NODE_ENV=production`, `FRONTEND_URL` to the exact deployed frontend origin (no trailing slash), and the email variables used by the features you enable. For the current local setup, that means `EMAIL_USER`/`EMAIL_PASSWORD` for verification and recovery, plus `CONTACT_EMAIL_USER`/`CONTACT_EMAIL_PASSWORD` and `CONTACT_NOTIFICATION_EMAIL` for contact submissions and replies. Set `MASTER_KEY`, `OTP_HMAC_SECRET`, and `SESSION_SECRET` to strong independent random values before using encrypted recruiter leads; preserve backups of these keys separately from the database. Email settings that are absent or rejected by the provider leave those email flows unavailable even though the API can start.
+
+Attach a persistent disk to the backend service and set `STORAGE_DIR` and `DATABASE_PATH` to paths on that disk. Before the first production deploy, copy the existing SQLite database and uploaded `private-documents/`, `profile-images/`, and `message-attachments/` files to the persistent disk. Local data and hosted data are different copies; deploys do not migrate either one automatically. Keep credentials in the provider's secret store, never in frontend `VITE_*` variables, because frontend variables are included in public browser assets. Verify `/api/health`, `/api/contact/status`, account-email SMTP connectivity, and an actual backup restore after configuring production. The contact status endpoint reports SMTP connectivity without exposing credentials.
 
 The backend allows exact origins listed in `FRONTEND_URL`. Local development origins are allowed only outside production. In production, set `FRONTEND_URL` to the exact deployed frontend origin; comma-separated origins are supported, and wildcard origins are not.
 
