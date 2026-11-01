@@ -5,13 +5,23 @@ import dotenv from 'dotenv';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const isRender = process.env.RENDER === 'true';
 
 const envPath = path.resolve(__dirname, '.env');
 const result = dotenv.config({ path: envPath });
 
+// Render supplies secrets through the service environment, not a checked-in
+// .env file. Treat every Render instance as production before importing app.js
+// so CORS, cookies, proxy handling, and the listener use production settings.
+if (isRender) process.env.NODE_ENV = 'production';
+
 if (result.error) {
-  console.error('⚠️  Warning: Could not find or load .env file at:', envPath);
-  console.error('👉 Make sure you ran: cp .env.example .env');
+  if (isRender) {
+    console.log('Render detected; using service environment variables (no .env file needed).');
+  } else {
+    console.error('⚠️  Warning: Could not find or load .env file at:', envPath);
+    console.error('👉 Make sure you ran: cp .env.example .env');
+  }
 } else if (result.parsed) {
   console.log('✅ .env file loaded successfully. Parsed variables:', Object.keys(result.parsed));
 }
@@ -19,13 +29,15 @@ if (result.error) {
 // Solve Hoisting: Import the app ONLY after dotenv has initialized process.env
 const { default: app } = await import('./app.js');
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || (isRender ? 10000 : 5000);
 // Keep local development bound to this machine. Hosted environments need to
 // accept traffic from the platform's network interface.
-const HOST = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1');
+const HOST = isRender
+  ? '0.0.0.0'
+  : (process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1'));
 
 app.listen(PORT, HOST, () => {
-  console.log(`✅ Server running on port ${PORT}`);
+  console.log(`✅ Server listening on ${HOST}:${PORT} (${process.env.NODE_ENV || 'development'})`);
   console.log(`📡 Allowed Frontend URL: ${process.env.FRONTEND_URL || 'None (using reflect origin)'}`);
   console.log(`📧 Email configured: ${process.env.EMAIL_USER || '❌ NO'}`);
   console.log(`🔑 App Password set: ${process.env.EMAIL_PASSWORD ? '✅ YES' : '❌ NO'}`);
