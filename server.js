@@ -15,6 +15,37 @@ const result = dotenv.config({ path: envPath });
 // so CORS, cookies, proxy handling, and the listener use production settings.
 if (isRender) process.env.NODE_ENV = 'production';
 
+if (isRender) {
+  // A local .env copied into Render (or localhost-only dashboard settings)
+  // must not leave the hosted frontend outside the API's CORS allowlist or
+  // generate verification/reset links back to localhost.
+  const configuredOrigins = (process.env.FRONTEND_URL || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  const validOrigins = configuredOrigins.filter((origin) => {
+    try {
+      const parsed = new URL(origin);
+      return ['http:', 'https:'].includes(parsed.protocol) && parsed.origin === origin;
+    } catch {
+      return false;
+    }
+  });
+  const isLocalOrigin = (origin) => {
+    try {
+      return ['localhost', '127.0.0.1', '::1'].includes(new URL(origin).hostname);
+    } catch {
+      return true;
+    }
+  };
+  const publicOrigin = validOrigins.find((origin) => !isLocalOrigin(origin))
+    || 'https://my-digital-status.onrender.com';
+  process.env.FRONTEND_URL = [...new Set([
+    publicOrigin,
+    ...validOrigins.filter((origin) => !isLocalOrigin(origin))
+  ])].join(',');
+}
+
 if (result.error) {
   if (isRender) {
     console.log('Render detected; using service environment variables (no .env file needed).');
