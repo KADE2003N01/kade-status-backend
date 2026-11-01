@@ -1,0 +1,20 @@
+﻿Digital Status local data migration snapshot
+Created: 2026-11-01
+
+Contents:
+- portfolio.sqlite: consistent SQLite backup made with better-sqlite3 backup API.
+- private-documents/: document uploads referenced by the database.
+- profile-images/: profile image uploads.
+- message-attachments/: chat attachment uploads.
+
+No .env file or credentials are included.
+
+To migrate to a persistent production mount such as /var/data:
+1. Stop the backend or make a second backup immediately before cutover.
+2. Copy portfolio.sqlite to /var/data/portfolio.sqlite.
+3. Copy the three upload folders into /var/data, preserving their names.
+4. Set STORAGE_DIR=/var/data and DATABASE_PATH=/var/data/portfolio.sqlite in the backend service environment.
+5. Configure the production secrets separately; do not upload the local .env.
+6. Start the backend and confirm /api/health, admin login, documents, and profile images before switching traffic.
+
+Treat this bundle as private: the database contains admin accounts and visitor data.
