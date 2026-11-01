@@ -13,6 +13,7 @@ import {
   getSessionCookieOptions
 } from '../../verification/admin-auth.js';
 import { sendAdminPasswordLink } from '../../services/admin-password-links.js';
+import { resolveSupportRequestsForAdmin } from '../../services/support-request-resolution.js';
 
 const router = express.Router();
 const scryptAsync = promisify(scrypt);
@@ -60,7 +61,10 @@ router.post('/login', async (req, res, next) => {
       isValidPassword = expected.length === candidate.length && timingSafeEqual(expected, candidate);
     }
 
-    if (!user || !isValidPassword) {
+    if (!user) {
+      return res.status(401).json({ success: false, code: 'ADMIN_NOT_FOUND', error: 'Email or password is incorrect.' });
+    }
+    if (!isValidPassword) {
       return res.status(401).json({ success: false, error: 'Email or password is incorrect.' });
     }
     if (user.status === 'pending') return res.status(403).json({ success: false, code: 'ADMIN_SETUP_PENDING', error: 'This account is not active yet. Open the setup link sent to your email, or request a new one.' });
@@ -88,6 +92,8 @@ router.post('/login', async (req, res, next) => {
         }
       } catch {}
     }
+
+    resolveSupportRequestsForAdmin(email, ['sign_in'], user.id, 'admin_signed_in');
 
     return res.json({
       success: true,
@@ -170,13 +176,13 @@ router.post('/password-reset/validate', (req, res) => {
   if (token.length < 32 || token.length > 128) return res.status(410).json({ success: false, valid: false, error: 'This link has expired or already been used. Request a fresh link.' });
   const tokenHash = createHash('sha256').update(token).digest('hex');
   const account = database.prepare(`
-    SELECT admin_users.status
+    SELECT admin_users.status, admin_users.display_name AS displayName, admin_users.email, admin_users.phone
     FROM admin_password_resets
     JOIN admin_users ON admin_users.id = admin_password_resets.user_id
     WHERE admin_password_resets.token_hash = ? AND admin_password_resets.expires_at > ?
   `).get(tokenHash, Date.now());
   if (!account) return res.status(410).json({ success: false, valid: false, error: 'This link has expired or already been used. Request a fresh link.' });
-  return res.json({ success: true, valid: true, purpose: account.status === 'pending' ? 'setup' : 'reset' });
+  return res.json({ success: true, valid: true, purpose: account.status === 'pending' ? 'setup' : 'reset', profile: account.status === 'pending' ? { displayName: account.displayName, email: account.email, phone: account.phone || '' } : undefined });
 });
 
 function scheduleAccountLink(user, setup) {
@@ -211,25 +217,40 @@ router.post('/password-reset/confirm', async (req, res, next) => {
   try {
     const token = typeof req.body?.token === 'string' ? req.body.token : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const displayName = typeof req.body?.displayName === 'string' ? req.body.displayName.trim() : '';
+    const phone = typeof req.body?.phone === 'string' ? req.body.phone.trim() : '';
     if (token.length < 32 || token.length > 128) return res.status(400).json({ success: false, error: 'This reset link is invalid or expired. Request a new one.' });
     if (password.length < 8 || password.length > 1024) return res.status(400).json({ success: false, error: 'Choose a password with at least 8 characters.' });
     const tokenHash = createHash('sha256').update(token).digest('hex');
     const now = Date.now();
     const reset = database.prepare('SELECT user_id FROM admin_password_resets WHERE token_hash = ? AND expires_at > ?').get(tokenHash, now);
     if (!reset) return res.status(410).json({ success: false, error: 'This reset link is invalid or expired. Request a new one.' });
+    const linkedUser = database.prepare('SELECT id, email, status FROM admin_users WHERE id = ?').get(reset.user_id);
+    if (!linkedUser) return res.status(410).json({ success: false, error: 'This reset link is invalid or expired. Request a new one.' });
+    if (linkedUser.status === 'pending' && (displayName.length < 2 || displayName.length > 120 || phone.length > 40)) {
+      return res.status(400).json({ success: false, error: 'Enter a name from 2 to 120 characters and a phone number no longer than 40 characters.' });
+    }
     const completed = database.transaction(() => {
       const consumed = database.prepare('DELETE FROM admin_password_resets WHERE token_hash = ? AND expires_at > ?').run(tokenHash, now);
       if (!consumed.changes) return null;
       const user = database.prepare('SELECT id, status FROM admin_users WHERE id = ?').get(reset.user_id);
       if (!user) return null;
-      database.prepare("UPDATE admin_users SET password_hash = ?, status = CASE WHEN status = 'pending' THEN 'active' ELSE status END WHERE id = ?")
-        .run(makePasswordHash(password), user.id);
+      if (user.status === 'pending') {
+        database.prepare("UPDATE admin_users SET display_name = ?, phone = ?, password_hash = ?, status = 'active' WHERE id = ?")
+          .run(displayName, phone || null, makePasswordHash(password), user.id);
+      } else {
+        database.prepare('UPDATE admin_users SET password_hash = ? WHERE id = ?').run(makePasswordHash(password), user.id);
+      }
       database.prepare('DELETE FROM admin_password_resets WHERE user_id = ?').run(user.id);
       database.prepare('DELETE FROM admin_sessions WHERE user_id = ?').run(user.id);
       auditPasswordAction(user.id, user.id, 'admin_password_reset_completed', { purpose: user.status === 'pending' ? 'setup' : 'reset' });
       return user.status;
     })();
     if (completed === null) return res.status(410).json({ success: false, error: 'This reset link is invalid or expired. Request a new one.' });
+    resolveSupportRequestsForAdmin(linkedUser.email, completed === 'pending'
+      ? ['admin_invitation', 'setup_link', 'sign_in']
+      : completed === 'active' ? ['admin_invitation', 'password_reset', 'sign_in'] : ['password_reset'], linkedUser.id,
+    completed === 'pending' ? 'admin_setup_completed' : 'admin_password_reset_completed');
     const message = completed === 'pending'
       ? 'Your password is set and your admin account is active. You can now sign in.'
       : completed === 'inactive'

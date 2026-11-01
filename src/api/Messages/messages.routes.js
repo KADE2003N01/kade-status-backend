@@ -304,8 +304,9 @@ router.get('/unread-count', (req, res) => {
       WHERE sender.role = 'platform_owner' AND sender.id <> ? AND message.deleted_at IS NULL
         AND (thread.admin_user_id = ? OR message.recipient_owner_id = ?)
         AND NOT EXISTS (SELECT 1 FROM platform_message_reads state WHERE state.message_id = message.id AND state.reader_id = ?)
+        AND NOT EXISTS (SELECT 1 FROM platform_message_hidden hidden WHERE hidden.message_id = message.id AND hidden.admin_user_id = ?)
         AND NOT EXISTS (SELECT 1 FROM platform_message_permanent_hidden hidden WHERE hidden.message_id = message.id AND hidden.admin_user_id = ?)`)
-      .get(req.adminUser.id, req.adminUser.id, req.adminUser.id, req.adminUser.id, req.adminUser.id).count;
+      .get(req.adminUser.id, req.adminUser.id, req.adminUser.id, req.adminUser.id, req.adminUser.id, req.adminUser.id).count;
     return res.json({ success: true, count: directUnread + visitorCount, visitorCount });
   }
   return res.json({ success: true, count: unreadCount(req.adminUser) + visitorCount, visitorCount });

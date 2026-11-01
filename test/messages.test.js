@@ -99,6 +99,19 @@ test('admin inbox lists active super-admins and supports editable, clearable mes
   assert.equal(ownerHiddenPeerMessage.status, 200);
   assert.ok(!(await (await request(ownerToken)).json()).messages.some((message) => message.id === peerMessageId), 'Manage can remove a received message from only the current owner inbox');
 
+  const ownerWorkspaceMessageId = database.prepare(`INSERT INTO platform_messages (thread_id, sender_id, body, recipient_owner_id)
+    VALUES (?, ?, 'Owner workspace unread message', ?)`).run(peerThreadId, peerOwnerId, ownerId).lastInsertRowid;
+  const ownerWorkspaceUnread = await request(ownerToken, '/unread-count?workspace=admin');
+  assert.equal((await ownerWorkspaceUnread.json()).count, 1, 'the regular owner workspace shows incoming super-admin messages');
+  const ownerWorkspaceHidden = await request(ownerToken, '/bulk-clear?workspace=admin', {
+    method: 'DELETE', body: JSON.stringify({ ids: [ownerWorkspaceMessageId] })
+  });
+  assert.equal(ownerWorkspaceHidden.status, 200);
+  const ownerWorkspaceUnreadAfterHide = await request(ownerToken, '/unread-count?workspace=admin');
+  assert.equal((await ownerWorkspaceUnreadAfterHide.json()).count, 0, 'hiding a message from the regular owner workspace also clears its notification badge');
+  const ownerInboxCountAfterHide = await requestOwner('/inbox-counts');
+  assert.equal((await ownerInboxCountAfterHide.json()).messages, 0, 'hidden messages are excluded from the Control Admins unread badge');
+
   const ownerReply = await request(ownerToken, '', { method: 'POST', body: JSON.stringify({ body: 'Reply from the owner', adminId, allowMessageReplies: false }) });
   assert.equal(ownerReply.status, 201);
   await ownerReply.json();
