@@ -25,7 +25,7 @@ try {
   const phone = (await promptText('Phone number (optional): ')).trim();
   if (phone.length > 40) throw new Error('Enter a phone number no longer than 40 characters.');
 
-  const password = await promptPasswordPair(12);
+  const password = await promptPasswordPair(6, 10);
   if (password === null) {
     console.log('Super-admin creation cancelled.');
     process.exitCode = 1;
