@@ -384,16 +384,42 @@ if (bootstrapAdmins.length) {
 }
 
 const configuredPlatformOwnerEmail = process.env.PLATFORM_OWNER_EMAIL?.trim().toLowerCase();
-if (configuredPlatformOwnerEmail) {
-  const platformOwner = database.prepare('SELECT id, roles_json FROM admin_users WHERE email = ?').get(configuredPlatformOwnerEmail) || null;
-  if (!platformOwner) {
-    console.warn(`PLATFORM_OWNER_EMAIL does not match an admin account: ${configuredPlatformOwnerEmail}.`);
-  } else {
-    const roles = JSON.parse(platformOwner.roles_json || '[]');
-    if (!roles.includes('platform_owner')) roles.push('platform_owner');
-    database.prepare("UPDATE admin_users SET role = 'platform_owner', roles_json = ?, status = 'active' WHERE id = ?")
-      .run(JSON.stringify(roles), platformOwner.id);
+const configuredPlatformOwnerEmails = [
+  ...(process.env.PLATFORM_OWNER_EMAILS || '').split(','),
+  configuredPlatformOwnerEmail || ''
+].map((email) => email.trim().toLowerCase()).filter(Boolean);
+const platformOwnerEmails = [...new Set(configuredPlatformOwnerEmails)];
+const platformOwnerRoles = [
+  'platform_owner', 'portfolio_owner', 'content_manager', 'document_manager', 'download_manager', 'profile_manager'
+];
+
+for (const email of platformOwnerEmails) {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error('PLATFORM_OWNER_EMAIL and PLATFORM_OWNER_EMAILS must contain valid email addresses.');
   }
+}
+
+if (platformOwnerEmails.length) {
+  const promotePlatformOwners = database.transaction((emails) => {
+    let promotedCount = 0;
+    for (const email of emails) {
+      const platformOwner = database.prepare('SELECT id, roles_json FROM admin_users WHERE email = ?').get(email);
+      if (!platformOwner) {
+        console.warn(`Platform-owner bootstrap skipped an email with no matching admin account: ${email}.`);
+        continue;
+      }
+
+      const roles = new Set(JSON.parse(platformOwner.roles_json || '[]'));
+      for (const role of platformOwnerRoles) roles.add(role);
+      database.prepare("UPDATE admin_users SET role = 'platform_owner', roles_json = ?, status = 'active' WHERE id = ?")
+        .run(JSON.stringify([...roles]), platformOwner.id);
+      database.prepare('DELETE FROM admin_sessions WHERE user_id = ?').run(platformOwner.id);
+      promotedCount += 1;
+    }
+    return promotedCount;
+  });
+  const promotedCount = promotePlatformOwners(platformOwnerEmails);
+  console.log(`Platform-owner bootstrap processed ${promotedCount} existing admin account(s).`);
 }
 
 const superAdminEmail = process.env.SUPER_ADMIN_EMAIL?.trim().toLowerCase();
