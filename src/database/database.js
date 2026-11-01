@@ -384,10 +384,47 @@ if (bootstrapAdmins.length) {
 }
 
 const configuredPlatformOwnerEmail = process.env.PLATFORM_OWNER_EMAIL?.trim().toLowerCase();
-if (configuredPlatformOwnerEmail) {
+const configuredPlatformOwnerPassword = process.env.PLATFORM_OWNER_PASSWORD || '';
+const configuredPlatformOwnerDisplayName = process.env.PLATFORM_OWNER_DISPLAY_NAME?.trim() || '';
+const configuredPlatformOwnerPhone = process.env.PLATFORM_OWNER_PHONE?.trim() || null;
+const hasPlatformOwnerBootstrapDetails = Boolean(configuredPlatformOwnerPassword || configuredPlatformOwnerDisplayName);
+if (configuredPlatformOwnerEmail || hasPlatformOwnerBootstrapDetails) {
+  if (!configuredPlatformOwnerEmail) {
+    throw new Error('PLATFORM_OWNER_EMAIL is required when configuring platform-owner bootstrap details.');
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(configuredPlatformOwnerEmail)) {
+    throw new Error('PLATFORM_OWNER_EMAIL must be a valid email address.');
+  }
+  if (hasPlatformOwnerBootstrapDetails) {
+    if (!configuredPlatformOwnerPassword || !configuredPlatformOwnerDisplayName) {
+      throw new Error('Set PLATFORM_OWNER_PASSWORD and PLATFORM_OWNER_DISPLAY_NAME together when creating a platform-owner account.');
+    }
+    if (configuredPlatformOwnerPassword.length < 12 || configuredPlatformOwnerPassword.length > 1024) {
+      throw new Error('PLATFORM_OWNER_PASSWORD must be between 12 and 1,024 characters.');
+    }
+    if (configuredPlatformOwnerDisplayName.length < 2 || configuredPlatformOwnerDisplayName.length > 120) {
+      throw new Error('PLATFORM_OWNER_DISPLAY_NAME must be between 2 and 120 characters.');
+    }
+    if (configuredPlatformOwnerPhone && configuredPlatformOwnerPhone.length > 40) {
+      throw new Error('PLATFORM_OWNER_PHONE must be no longer than 40 characters.');
+    }
+  }
+
   const platformOwner = database.prepare('SELECT id, roles_json FROM admin_users WHERE email = ?').get(configuredPlatformOwnerEmail) || null;
   if (!platformOwner) {
-    console.warn(`PLATFORM_OWNER_EMAIL does not match an admin account: ${configuredPlatformOwnerEmail}.`);
+    if (configuredPlatformOwnerPassword && configuredPlatformOwnerDisplayName) {
+      const salt = randomBytes(16).toString('hex');
+      const passwordHash = scryptSync(configuredPlatformOwnerPassword, salt, 64).toString('hex');
+      database.prepare(`INSERT INTO admin_users
+        (email, display_name, password_hash, phone, role, status, roles_json)
+        VALUES (?, ?, ?, ?, 'platform_owner', 'active', ?)`)
+        .run(configuredPlatformOwnerEmail, configuredPlatformOwnerDisplayName, `${salt}:${passwordHash}`, configuredPlatformOwnerPhone, JSON.stringify([
+          'platform_owner', 'portfolio_owner', 'content_manager', 'document_manager', 'download_manager', 'profile_manager'
+        ]));
+      console.log(`Platform-owner admin account created for ${configuredPlatformOwnerEmail}.`);
+    } else {
+      console.warn(`PLATFORM_OWNER_EMAIL does not match an admin account: ${configuredPlatformOwnerEmail}. Set PLATFORM_OWNER_PASSWORD and PLATFORM_OWNER_DISPLAY_NAME to create it.`);
+    }
   } else {
     const roles = JSON.parse(platformOwner.roles_json || '[]');
     if (!roles.includes('platform_owner')) roles.push('platform_owner');
