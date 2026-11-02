@@ -141,6 +141,27 @@ test('remember me issues a persistent 30-day session without storing a password'
   assert.equal(logout.status, 200);
 });
 
+test('a valid bearer session still works when the browser sends a stale admin cookie', async () => {
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
+    ...requestOptions,
+    method: 'POST',
+    body: JSON.stringify({ email: 'admin-test@example.com', password: 'test5' })
+  });
+  assert.equal(login.status, 200);
+  const { sessionToken } = await login.json();
+  assert.ok(sessionToken);
+
+  const currentUser = await fetch(`${baseUrl}/api/auth/me`, {
+    headers: {
+      ...requestOptions.headers,
+      Cookie: 'kade_admin_session=expired-browser-session',
+      Authorization: `Bearer ${sessionToken}`
+    }
+  });
+  assert.equal(currentUser.status, 200);
+  assert.equal((await currentUser.json()).user.email, 'admin-test@example.com');
+});
+
 test('public document previews require email verification', async () => {
   const directPreview = await fetch(`${baseUrl}/api/downloads/preview/cv`, {
     headers: { Origin: 'http://localhost:5500' }
@@ -385,7 +406,9 @@ test('admin credentials issue a revocable session and the admin name comes from 
     headers: { ...requestOptions.headers, Cookie: cookie }
   });
   assert.equal(authenticated.status, 200);
-  assert.equal((await authenticated.json()).user.displayName, 'Database Test Admin');
+  const authenticatedUser = (await authenticated.json()).user;
+  assert.equal(authenticatedUser.displayName, 'Database Test Admin');
+  assert.ok(Number.isInteger(authenticatedUser.id));
 
   database.prepare('UPDATE admin_users SET display_name = ?').run('Updated From Database');
   const refreshedProfile = await fetch(`${baseUrl}/api/auth/me`, {

@@ -1,6 +1,4 @@
-node_modules/
-data/
-.env
+node_modules/git 
 .env.*
 !.env.example
 message-attachments/

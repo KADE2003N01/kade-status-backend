@@ -31,26 +31,27 @@ export function clearSessionCookie(res) {
 }
 
 function getSessionUser(req) {
-  let token = req.cookies?.[SESSION_COOKIE];
-  if (!token) {
-    const header = req.headers?.authorization || '';
-    if (header.startsWith('Bearer ')) token = header.slice(7).trim() || null;
-  }
-  if (!token) return null;
-
-  const session = database.prepare(`
+  const header = req.headers?.authorization || '';
+  const bearerToken = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  const tokens = [...new Set([req.cookies?.[SESSION_COOKIE], bearerToken]
+    .filter((token) => typeof token === 'string' && token))];
+  const findSession = database.prepare(`
     SELECT admin_users.id, admin_users.email, admin_users.display_name, admin_users.role, admin_users.roles_json, admin_users.status
     FROM admin_sessions
     JOIN admin_users ON admin_users.id = admin_sessions.user_id
     WHERE admin_sessions.token_hash = ? AND admin_sessions.expires_at > ? AND admin_users.status = 'active'
-  `).get(hashSessionToken(token), Date.now());
+  `);
 
-  if (!session) return null;
-  let roles = [];
-  try { roles = JSON.parse(session.roles_json || '[]'); } catch { roles = []; }
-  session.roles = Array.isArray(roles) && roles.length ? roles : [session.role];
-  delete session.roles_json;
-  return session;
+  for (const token of tokens) {
+    const session = findSession.get(hashSessionToken(token), Date.now());
+    if (!session) continue;
+    let roles = [];
+    try { roles = JSON.parse(session.roles_json || '[]'); } catch { roles = []; }
+    session.roles = Array.isArray(roles) && roles.length ? roles : [session.role];
+    delete session.roles_json;
+    return session;
+  }
+  return null;
 }
 
 export function requireAdmin(req, res, next) {

@@ -111,7 +111,7 @@ router.get('/me', requireAdmin, (req, res) => {
   const user = req.adminUser;
   return res.json({
     success: true,
-    user: { email: user.email, displayName: user.display_name, role: user.role, roles: user.roles }
+    user: { id: user.id, email: user.email, displayName: user.display_name, role: user.role, roles: user.roles }
   });
 });
 

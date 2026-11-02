@@ -279,11 +279,14 @@ function ensureThread(adminId, replyAllowed = true) {
 }
 
 function unreadCount(user) {
+  const recipientCondition = isPlatformOwner(user)
+    ? `(COALESCE(message.recipient_owner_id, thread.admin_user_id) = ? OR (message.recipient_owner_id IS NULL AND sender.role <> 'platform_owner'))`
+    : 'COALESCE(message.recipient_owner_id, thread.admin_user_id) = ?';
   return database.prepare(`SELECT COUNT(*) AS count
     FROM platform_messages message
     JOIN platform_message_threads thread ON thread.id = message.thread_id
     JOIN admin_users sender ON sender.id = message.sender_id
-    WHERE message.deleted_at IS NULL AND sender.id <> ? AND COALESCE(message.recipient_owner_id, thread.admin_user_id) = ?
+    WHERE message.deleted_at IS NULL AND sender.id <> ? AND ${recipientCondition}
       AND NOT EXISTS (SELECT 1 FROM platform_message_reads read_state WHERE read_state.message_id = message.id AND read_state.reader_id = ?)
       AND NOT EXISTS (SELECT 1 FROM platform_message_hidden hidden WHERE hidden.message_id = message.id AND hidden.admin_user_id = ?)
       AND NOT EXISTS (SELECT 1 FROM platform_message_permanent_hidden hidden WHERE hidden.message_id = message.id AND hidden.admin_user_id = ?)`)
@@ -302,11 +305,11 @@ router.get('/unread-count', (req, res) => {
       JOIN platform_message_threads thread ON thread.id = message.thread_id
       JOIN admin_users sender ON sender.id = message.sender_id
       WHERE sender.role = 'platform_owner' AND sender.id <> ? AND message.deleted_at IS NULL
-        AND (thread.admin_user_id = ? OR message.recipient_owner_id = ?)
+        AND COALESCE(message.recipient_owner_id, thread.admin_user_id) = ?
         AND NOT EXISTS (SELECT 1 FROM platform_message_reads state WHERE state.message_id = message.id AND state.reader_id = ?)
         AND NOT EXISTS (SELECT 1 FROM platform_message_hidden hidden WHERE hidden.message_id = message.id AND hidden.admin_user_id = ?)
         AND NOT EXISTS (SELECT 1 FROM platform_message_permanent_hidden hidden WHERE hidden.message_id = message.id AND hidden.admin_user_id = ?)`)
-      .get(req.adminUser.id, req.adminUser.id, req.adminUser.id, req.adminUser.id, req.adminUser.id, req.adminUser.id).count;
+      .get(req.adminUser.id, req.adminUser.id, req.adminUser.id, req.adminUser.id, req.adminUser.id).count;
     return res.json({ success: true, count: directUnread + visitorCount, visitorCount });
   }
   return res.json({ success: true, count: unreadCount(req.adminUser) + visitorCount, visitorCount });
@@ -455,6 +458,7 @@ router.get('/', (req, res) => {
         sender.email AS senderEmail, sender.role AS senderRole, owner.display_name AS recipientOwnerName, message.recipient_owner_id AS recipientOwnerId, message.body, message.created_at AS createdAt, message.deleted_at AS deletedAt, message.edited_at AS editedAt, message.message_group_id AS messageGroupId, message.message_group_label AS messageGroupLabel, message.reply_allowed AS replyAllowed, message.reply_to_message_id AS replyToMessageId,
         EXISTS (SELECT 1 FROM platform_message_reads state WHERE state.message_id = message.id AND state.reader_id = ?) AS isRead,
         EXISTS (SELECT 1 FROM platform_message_deliveries delivery WHERE delivery.message_id = message.id AND delivery.recipient_id = COALESCE(message.recipient_owner_id, thread.admin_user_id)) AS isDelivered,
+        EXISTS (SELECT 1 FROM platform_message_reads state WHERE state.message_id = message.id AND state.reader_id = COALESCE(message.recipient_owner_id, thread.admin_user_id)) AS isReadByRecipient,
         0 AS isHidden
         FROM platform_messages message JOIN platform_message_threads thread ON thread.id = message.thread_id
         LEFT JOIN admin_users sender ON sender.id = message.sender_id LEFT JOIN admin_users owner ON owner.id = message.recipient_owner_id
@@ -465,6 +469,7 @@ router.get('/', (req, res) => {
         sender.email AS senderEmail, sender.role AS senderRole, owner.display_name AS recipientOwnerName, message.recipient_owner_id AS recipientOwnerId, message.body, message.created_at AS createdAt, message.deleted_at AS deletedAt, message.edited_at AS editedAt, message.message_group_id AS messageGroupId, message.message_group_label AS messageGroupLabel, message.reply_allowed AS replyAllowed, message.reply_to_message_id AS replyToMessageId,
         EXISTS (SELECT 1 FROM platform_message_reads state WHERE state.message_id = message.id AND state.reader_id = ?) AS isRead,
         EXISTS (SELECT 1 FROM platform_message_deliveries delivery WHERE delivery.message_id = message.id AND delivery.recipient_id = COALESCE(message.recipient_owner_id, thread.admin_user_id)) AS isDelivered,
+        EXISTS (SELECT 1 FROM platform_message_reads state WHERE state.message_id = message.id AND state.reader_id = COALESCE(message.recipient_owner_id, thread.admin_user_id)) AS isReadByRecipient,
         EXISTS (SELECT 1 FROM platform_message_hidden hidden WHERE hidden.message_id = message.id AND hidden.admin_user_id = ?) AS isHidden
         FROM platform_messages message JOIN platform_message_threads thread ON thread.id = message.thread_id
         LEFT JOIN admin_users sender ON sender.id = message.sender_id LEFT JOIN admin_users owner ON owner.id = message.recipient_owner_id
@@ -476,6 +481,7 @@ router.get('/', (req, res) => {
         sender.email AS senderEmail, sender.role AS senderRole, owner.display_name AS recipientOwnerName, message.recipient_owner_id AS recipientOwnerId, message.body, message.created_at AS createdAt, message.deleted_at AS deletedAt, message.edited_at AS editedAt, message.message_group_id AS messageGroupId, message.message_group_label AS messageGroupLabel, message.reply_allowed AS replyAllowed, message.reply_to_message_id AS replyToMessageId,
         EXISTS (SELECT 1 FROM platform_message_reads state WHERE state.message_id = message.id AND state.reader_id = ?) AS isRead,
         EXISTS (SELECT 1 FROM platform_message_deliveries delivery WHERE delivery.message_id = message.id AND delivery.recipient_id = COALESCE(message.recipient_owner_id, thread.admin_user_id)) AS isDelivered,
+        EXISTS (SELECT 1 FROM platform_message_reads state WHERE state.message_id = message.id AND state.reader_id = COALESCE(message.recipient_owner_id, thread.admin_user_id)) AS isReadByRecipient,
         EXISTS (SELECT 1 FROM platform_message_hidden hidden WHERE hidden.message_id = message.id AND hidden.admin_user_id = ?) AS isHidden
         FROM platform_messages message JOIN platform_message_threads thread ON thread.id = message.thread_id
         LEFT JOIN admin_users sender ON sender.id = message.sender_id LEFT JOIN admin_users owner ON owner.id = message.recipient_owner_id WHERE thread.admin_user_id = ?
@@ -504,9 +510,9 @@ router.post('/threads/:threadId/read', (req, res) => {
     if (!sender) return res.status(404).json({ success: false, error: 'Super-admin conversation not found.' });
   }
   const incoming = isPlatformOwner(req.adminUser) && !adminWorkspace
-    ? `sender.id <> ${Number(req.adminUser.id)} AND (COALESCE(message.recipient_owner_id, thread.admin_user_id) = ${Number(req.adminUser.id)} OR message.recipient_owner_id IS NULL)`
+    ? `sender.id <> ${Number(req.adminUser.id)} AND (message.recipient_owner_id = ${Number(req.adminUser.id)} OR message.recipient_owner_id IS NULL)`
     : adminWorkspace
-      ? `sender.role = 'platform_owner' AND sender.id <> ${Number(req.adminUser.id)} AND (thread.admin_user_id = ${Number(req.adminUser.id)} OR message.recipient_owner_id = ${Number(req.adminUser.id)})`
+      ? `sender.role = 'platform_owner' AND sender.id <> ${Number(req.adminUser.id)} AND COALESCE(message.recipient_owner_id, thread.admin_user_id) = ${Number(req.adminUser.id)}`
       : 'sender.role = \'platform_owner\'';
   const senderFilter = senderId === null ? '' : ' AND sender.id = ?';
   database.prepare(`INSERT OR IGNORE INTO platform_message_reads (message_id, reader_id)

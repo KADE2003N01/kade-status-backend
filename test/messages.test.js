@@ -71,31 +71,43 @@ test('admin inbox lists active super-admins and supports editable, clearable mes
   const ownerInbox = await request(ownerToken);
   const ownerMessages = (await ownerInbox.json()).messages;
   assert.ok(ownerMessages.some((message) => message.id === sentMessage.id && message.recipientOwnerId === ownerId));
+  assert.equal((await (await request(adminToken)).json()).messages.find((message) => message.id === sentMessage.id).isReadByRecipient, 0);
 
   const peerThreadId = database.prepare('INSERT INTO platform_message_threads (admin_user_id) VALUES (?)').run(peerOwnerId).lastInsertRowid;
   const peerMessageId = database.prepare(`INSERT INTO platform_messages (thread_id, sender_id, body, recipient_owner_id)
     VALUES (?, ?, 'Peer owner message', ?)`).run(peerThreadId, peerOwnerId, ownerId).lastInsertRowid;
+  const peerPrivateMessageId = database.prepare(`INSERT INTO platform_messages (thread_id, sender_id, body)
+    VALUES (?, ?, 'Peer private message')`).run(peerThreadId, peerOwnerId).lastInsertRowid;
   const ownerCountsBeforePeerRead = (await (await requestOwner('/inbox-counts')).json()).messages;
   assert.equal(ownerCountsBeforePeerRead, 2, 'the owner chat icon includes unread messages from both admins and other super-admins');
   const ownerInboxWithPeer = await request(ownerToken);
-  assert.equal((await ownerInboxWithPeer.json()).messages.find((message) => message.id === peerMessageId).isRead, 0);
+  const ownerInboxMessages = (await ownerInboxWithPeer.json()).messages;
+  assert.equal(ownerInboxMessages.find((message) => message.id === peerMessageId).isRead, 0);
+  assert.equal(ownerInboxMessages.find((message) => message.id === peerPrivateMessageId).recipientOwnerId, null);
+  assert.equal(ownerCountsBeforePeerRead, 2, 'messages without a recipient are scoped to their thread owner, not every super-admin');
   const peerRead = await request(ownerToken, `/threads/${peerThreadId}/read`, { method: 'POST', body: '{}' });
   assert.equal(peerRead.status, 200);
   const ownerInboxAfterPeerRead = await request(ownerToken);
-  assert.equal((await ownerInboxAfterPeerRead.json()).messages.find((message) => message.id === peerMessageId).isRead, 1, 'opening a peer super-admin chat marks its messages as read');
+  const peerReadMessages = (await ownerInboxAfterPeerRead.json()).messages;
+  assert.equal(peerReadMessages.find((message) => message.id === peerMessageId).isRead, 1, 'opening a peer super-admin chat marks its messages as read');
+  assert.equal(peerReadMessages.find((message) => message.id === peerPrivateMessageId).isRead, 0, 'messages addressed to another owner stay unread in this inbox');
   const ownerCountsAfterPeerRead = (await (await requestOwner('/inbox-counts')).json()).messages;
   assert.equal(ownerCountsAfterPeerRead, ownerCountsBeforePeerRead - 1, 'reading a peer super-admin message clears the owner chat icon badge');
 
   await request(ownerToken, `/threads/${sentMessage.threadId}/read`, { method: 'POST', body: '{}' });
+  assert.equal((await (await request(adminToken)).json()).messages.find((message) => message.id === sentMessage.id).isReadByRecipient, 1);
   const legacyMessageId = database.prepare(`INSERT INTO platform_messages (thread_id, sender_id, body)
     VALUES (?, ?, 'Legacy private message without a recipient owner')`).run(sentMessage.threadId, adminId).lastInsertRowid;
   const ownerCountsBeforeLegacyRead = (await (await requestOwner('/inbox-counts')).json()).messages;
+  const ownerUnreadBeforeLegacyRead = (await (await request(ownerToken, '/unread-count')).json()).count;
+  assert.equal(ownerUnreadBeforeLegacyRead, 1, 'a legacy admin message remains unread for its recipient owner');
   const legacyRead = await request(ownerToken, `/threads/${sentMessage.threadId}/read`, { method: 'POST', body: '{}' });
   assert.equal(legacyRead.status, 200);
   const ownerInboxAfterLegacyRead = await request(ownerToken);
   assert.equal((await ownerInboxAfterLegacyRead.json()).messages.find((message) => message.id === legacyMessageId).isRead, 1, 'legacy private messages without a recipient owner are marked read by the opened owner');
   const ownerCountsAfterLegacyRead = (await (await requestOwner('/inbox-counts')).json()).messages;
   assert.equal(ownerCountsAfterLegacyRead, ownerCountsBeforeLegacyRead - 1, 'reading a legacy private message clears its unread badge');
+  assert.equal((await (await request(ownerToken, '/unread-count')).json()).count, ownerUnreadBeforeLegacyRead - 1);
   const ownerHiddenPeerMessage = await request(ownerToken, '/bulk-hide', { method: 'DELETE', body: JSON.stringify({ ids: [peerMessageId] }) });
   assert.equal(ownerHiddenPeerMessage.status, 200);
   assert.ok(!(await (await request(ownerToken)).json()).messages.some((message) => message.id === peerMessageId), 'Manage can remove a received message from only the current owner inbox');
