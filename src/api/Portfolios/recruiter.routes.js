@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
-import database from '../../database/database.js';
+import database from '../../database/platform-database.js';
 import { getMailFromAddress, getTransporter } from '../../config/mailer.js';
 import { validateRequest } from '../../middleware/validate-request.js';
 import {

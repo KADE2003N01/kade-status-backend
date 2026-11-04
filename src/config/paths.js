@@ -13,10 +13,15 @@ export function resolveBackendPath(configuredPath, fallbackPath) {
 
 export function getDatabasePath() {
   if (process.env.DATABASE_PATH) {
-    return resolveBackendPath(process.env.DATABASE_PATH, path.join('data', 'portfolio.sqlite'));
+    return resolveBackendPath(process.env.DATABASE_PATH, path.join('data', 'database.sqlite'));
   }
   if (process.env.STORAGE_DIR) {
-    return path.join(path.resolve(process.env.STORAGE_DIR), 'portfolio.sqlite');
+    return path.join(path.resolve(process.env.STORAGE_DIR), 'database.sqlite');
   }
-  return resolveBackendPath(undefined, path.join('data', 'portfolio.sqlite'));
+  return resolveBackendPath(undefined, path.join('data', 'database.sqlite'));
+}
+
+/** Both the platform and portfolio-admin app use one shared SQLite database. */
+export function getPlatformDatabasePath() {
+  return getDatabasePath();
 }

@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { randomBytes, scryptSync } from 'node:crypto';
 import bcrypt from 'bcryptjs';
@@ -8,6 +8,18 @@ import { runMigrations } from './migrations.js';
 
 const databasePath = getDatabasePath();
 mkdirSync(path.dirname(databasePath), { recursive: true });
+
+// Preserve the existing local database and its WAL contents when moving to
+// the clearer shared filename `database.sqlite`.
+const previousDatabasePath = path.join(path.dirname(databasePath), 'portfolio.sqlite');
+if (!existsSync(databasePath) && path.resolve(previousDatabasePath) !== path.resolve(databasePath) && existsSync(previousDatabasePath)) {
+  const previousDatabase = new Database(previousDatabasePath, { readonly: true, fileMustExist: true });
+  try {
+    await previousDatabase.backup(databasePath);
+  } finally {
+    previousDatabase.close();
+  }
+}
 
 const database = new Database(databasePath);
 database.pragma('journal_mode = WAL');

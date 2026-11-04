@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 const migrationsDirectory = path.join(path.dirname(fileURLToPath(import.meta.url)), 'migrations');
 const migrationFilename = /^(\d{3})_([a-z0-9_]+)\.sql$/;
 
-export function runMigrations(database, directory = migrationsDirectory) {
+export function runMigrations(database, directory = migrationsDirectory, includedVersions = null) {
   database.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version INTEGER PRIMARY KEY,
@@ -21,6 +21,7 @@ export function runMigrations(database, directory = migrationsDirectory) {
       if (!match) throw new Error(`Invalid migration filename: ${filename}`);
       return { filename, version: Number(match[1]) };
     })
+    .filter(({ version }) => !includedVersions || includedVersions.includes(version))
     .sort((left, right) => left.version - right.version);
 
   for (let index = 1; index < migrations.length; index += 1) {

@@ -90,7 +90,7 @@ For an existing account on Render, set `PLATFORM_OWNER_EMAILS` in the backend se
 
 Use `npm run admin:list` to list account IDs, emails, roles, status, phone, and display names without showing password hashes. `npm run admin:edit` interactively changes an admin's display name or phone while preserving its role and password. `npm run admin:change-email` changes its email, checks for duplicates, and revokes that admin's sessions and pending password-reset links. `npm run admin:reset-password` sets a new hidden password and revokes sessions. These commands operate only on the database selected in the environment where they are run.
 
-`SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_PASSWORD`, and `SUPER_ADMIN_DISPLAY_NAME` seed a different account in the Digital Status `users` table. That SaaS account is not an admin-portal account and does not sign in through the portfolio admin login.
+`SUPER_ADMIN_EMAIL`, `SUPER_ADMIN_PASSWORD`, and `SUPER_ADMIN_DISPLAY_NAME` seed a different account in the FolioSpace database's `users` table. That SaaS account is not an admin-portal account and does not sign in through the portfolio admin login.
 
 ## Environment configuration
 
@@ -115,7 +115,7 @@ Use `.env.example` as the commented template. Copy it to `.env` for local use, r
 | `OTP_HMAC_SECRET` | Independent random secret of at least 32 characters used to hash recruiter emails and verification codes. |
 | `SESSION_SECRET` | Independent random secret of at least 32 characters used to hash recruiter session tokens. |
 | `DATABASE_PATH` | SQLite file path. Absolute paths are recommended for deployed persistent storage. Relative paths resolve from the backend folder. |
-| `STORAGE_DIR` | Root folder for uploaded profile images and PDFs. If `DATABASE_PATH` is blank, SQLite is stored here as `portfolio.sqlite`. |
+| `STORAGE_DIR` | Root folder for uploaded profile images and PDFs. If `DATABASE_PATH` is blank, SQLite is stored here as `database.sqlite`. |
 | `PUBLIC_API_URL` | Optional HTTPS backend base used to generate direct profile-image URLs. Usually leave the local example value for local development. |
 | `COOKIE_SAME_SITE` | Admin session cookie policy. `lax` is suitable for local development and the current same-origin production `/api` rewrite. |
 
@@ -123,13 +123,13 @@ Generate separate values for `MASTER_KEY`, `OTP_HMAC_SECRET`, and `SESSION_SECRE
 
 ## Database and uploaded files
 
-SQLite is the application's database. The default local database is `kade-status-backend/data/portfolio.sqlite`. Set `DATABASE_PATH` to choose another file. If `DATABASE_PATH` is blank and `STORAGE_DIR` is set, the database is `<STORAGE_DIR>/portfolio.sqlite`.
+The backend uses one SQLite database for both the existing portfolio/admin site and FolioSpace. The default local path is `kade-status-backend/data/database.sqlite`; set `DATABASE_PATH` to choose a different path. If the new `database.sqlite` does not exist and a neighboring `portfolio.sqlite` is present, startup makes a consistent SQLite backup into `database.sqlite`; the original file is preserved. SQL schema and changes are visible in `src/database/migrations/` and `src/database/database.js`.
 
 The backend creates or updates the schema at startup. Main tables include:
 
 | Table | Data stored |
 | --- | --- |
-| `users`, `sessions`, `email_verifications`, `password_resets` | Additive account and session foundation for the roadmap platform; separate from current portfolio-admin accounts. |
+| `users`, `sessions`, `email_verifications`, `password_resets` | FolioSpace accounts, sessions, and verification state, separate from portfolio-admin account rows. |
 | `admin_users`, `admin_sessions` | Admin accounts and active sessions. Passwords are stored as salted hashes. |
 | `portfolio_settings` | Published homepage content as JSON. |
 | `contact_messages` | Successfully emailed contact submissions: name, email, phone, message, and timestamp. |
@@ -137,8 +137,8 @@ The backend creates or updates the schema at startup. Main tables include:
 | `download_enquiries` | Visitor requests after email verification. |
 | `download_email_verifications`, `download_verification_limits`, `download_access_tokens`, `document_preview_tokens` | Temporary verification challenges, anti-abuse limits, and short-lived download or one-use preview authorization. |
 | `admin_password_resets` | Hashed, expiring password-reset tokens. |
-| `portfolios`, `portfolio_sections` | Customer-owned drafts and published portfolio content; public routes select only non-private sections. |
-| `plans`, `plan_features`, `subscriptions` | Initial Free and Professional catalog and customer subscription state. Professional remains inactive until pricing and billing are configured. |
+| `portfolios`, `portfolio_sections` | FolioSpace customer-owned drafts and published portfolio content; public routes select only non-private sections. |
+| `plans`, `plan_features`, `subscriptions`, `platform_onboarding` | FolioSpace plan catalog, features, access state, and signup progress. While billing is bypassed, Standard and Professional signup receive an active subscription and `paid` onboarding status as a temporary access shortcut; this is not evidence of a payment transaction. |
 | `recruiter_otps`, `recruiter_sessions` | Hashed, expiring email codes and portfolio-scoped recruiter sessions. |
 | `user_keys`, `recruiter_contacts` | Customer data keys wrapped by `MASTER_KEY`; recruiter contact fields are AES-256-GCM encrypted before storage. |
 
@@ -150,7 +150,7 @@ Uploaded profile images and administrator-uploaded PDFs are stored as files, whi
 
 ```text
 STORAGE_DIR=/var/data
-DATABASE_PATH=/var/data/portfolio.sqlite
+DATABASE_PATH=/var/data/database.sqlite
 ```
 
 Without persistent storage, local SQLite data and uploaded files can disappear when the service restarts or redeploys. A local `.env` and local SQLite file do not configure or update the hosted database. Back up/migrate an existing database before switching its configured path; starting with a new empty database does not copy the old records.

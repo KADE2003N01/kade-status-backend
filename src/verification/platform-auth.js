@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import database from '../database/database.js';
+import database from '../database/platform-database.js';
 
 export const PLATFORM_SESSION_COOKIE = 'kade_platform_session';
 export const PLATFORM_SESSION_DURATION_MS = 12 * 60 * 60 * 1000;

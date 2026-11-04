@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
-import database from '../database/database.js';
+import database from '../database/platform-database.js';
 
 export const RECRUITER_SESSION_COOKIE = 'digital_status_recruiter_session';
 export const RECRUITER_SESSION_DURATION_MS = 2 * 60 * 60 * 1000;

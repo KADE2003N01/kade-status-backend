@@ -27,7 +27,7 @@ process.env.SESSION_SECRET = 'session-secret-used-only-for-automated-tests-123';
 
 const [{ default: app }, { default: database }] = await Promise.all([
   import('../app.js'),
-  import('../src/database/database.js')
+  import('../src/database/platform-database.js')
 ]);
 const { hashRecruiterCode, hashRecruiterEmail, hashRecruiterSession } = await import('../src/services/platform-privacy.js');
 const users = ['portfolio-owner-a@example.com', 'portfolio-owner-b@example.com'].map((email) => (

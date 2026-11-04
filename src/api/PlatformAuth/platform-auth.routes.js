@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
-import database from '../../database/database.js';
+import database from '../../database/platform-database.js';
 import { getMailFromAddress, getTransporter } from '../../config/mailer.js';
 import { validateRequest } from '../../middleware/validate-request.js';
 import {
@@ -129,6 +129,7 @@ router.post('/signup', authRateLimit, validateRequest(signupSchema), async (req,
           .run(displayName, passwordHash, userId);
       }
       const isFreePlan = templateId === 'free';
+      const paymentStatus = isFreePlan ? 'not_required' : 'paid';
       database.prepare(`
         INSERT INTO platform_onboarding (user_id, selected_template_id, currency, stage, payment_status)
         VALUES (?, ?, ?, ?, ?)
@@ -142,9 +143,17 @@ router.post('/signup', authRateLimit, validateRequest(signupSchema), async (req,
         userId,
         templateId,
         currency,
-        isFreePlan ? 'space_setup' : 'subscription',
-        isFreePlan ? 'not_required' : 'pending'
+        'space_setup',
+        paymentStatus
       );
+      database.prepare(`
+        INSERT INTO subscriptions (user_id, plan_id, state, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE SET
+          plan_id = excluded.plan_id,
+          state = excluded.state,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(userId, templateId, isFreePlan ? 'free' : 'active');
       database.prepare('DELETE FROM email_verifications WHERE user_id = ?').run(userId);
       database.prepare(`
         INSERT INTO email_verifications (token_hash, user_id, expires_at, created_at)

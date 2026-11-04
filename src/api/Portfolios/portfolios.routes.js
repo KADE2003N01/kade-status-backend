@@ -1,6 +1,6 @@
 import express from 'express';
 import { z } from 'zod';
-import database from '../../database/database.js';
+import database from '../../database/platform-database.js';
 import { validateRequest } from '../../middleware/validate-request.js';
 import { requirePlatformUser } from '../../verification/platform-auth.js';
 import { decryptPrivateField } from '../../services/platform-privacy.js';

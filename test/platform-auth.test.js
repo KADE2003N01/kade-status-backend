@@ -25,7 +25,7 @@ process.env.EMAIL_PASSWORD = '';
 
 const [{ default: app }, { default: database }] = await Promise.all([
   import('../app.js'),
-  import('../src/database/database.js')
+  import('../src/database/platform-database.js')
 ]);
 const server = app.listen(0);
 await new Promise((resolve) => server.once('listening', resolve));

@@ -11,10 +11,12 @@ No .env file or credentials are included.
 
 To migrate to a persistent production mount such as /var/data:
 1. Stop the backend or make a second backup immediately before cutover.
-2. Copy portfolio.sqlite to /var/data/portfolio.sqlite.
+2. Copy portfolio.sqlite to /var/data/database.sqlite. This is the shared database filename now used by the backend.
 3. Copy the three upload folders into /var/data, preserving their names.
-4. Set STORAGE_DIR=/var/data and DATABASE_PATH=/var/data/portfolio.sqlite in the backend service environment.
+4. Set STORAGE_DIR=/var/data and DATABASE_PATH=/var/data/database.sqlite in the backend service environment.
 5. Configure the production secrets separately; do not upload the local .env.
 6. Start the backend and confirm /api/health, admin login, documents, and profile images before switching traffic.
 
 Treat this bundle as private: the database contains admin accounts and visitor data.
+
+The SQL that creates and updates the tables is in ../../src/database/migrations/. The local database path is ../database.sqlite. Both the legacy portfolio/admin features and FolioSpace use this one database file.
