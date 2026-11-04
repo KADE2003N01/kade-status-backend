@@ -14,7 +14,11 @@ router.post('/', (req, res) => {
   const category = typeof req.body?.category === 'string' ? req.body.category.trim() : '';
   const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
   const requestedRoles = [...new Set(Array.isArray(req.body?.roles) ? req.body.roles : [])];
-  const categories = new Set(['sign_in', 'inactive_account', 'password_reset', 'setup_link', 'admin_invitation', 'other']);
+  const categories = new Set([
+    'sign_in', 'inactive_account', 'password_reset', 'setup_link', 'admin_invitation', 'other',
+    'platform_sign_in', 'platform_signup', 'platform_account_access', 'platform_inactive_account',
+    'platform_subscription', 'platform_space_setup', 'platform_other'
+  ]);
   const standardRoles = new Set(['portfolio_owner', 'content_manager', 'document_manager', 'download_manager', 'profile_manager']);
   if (name.length < 2 || name.length > 120) return res.status(400).json({ success: false, error: 'Enter a name from 2 to 120 characters.' });
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) return res.status(400).json({ success: false, error: 'Enter a valid email address.' });
@@ -35,7 +39,7 @@ router.post('/', (req, res) => {
   const result = database.prepare(`INSERT INTO admin_support_requests (admin_user_id, name, email, category, message, requested_roles_json)
     VALUES (?, ?, ?, ?, ?, ?)`).run(user?.id || null, name, email, category, message, JSON.stringify(requestedRoles));
   database.prepare('INSERT INTO platform_admin_audit (actor_id, action, details_json) VALUES (?, ?, ?)')
-    .run(user?.id || null, 'admin_support_request_created', JSON.stringify({ requestId: result.lastInsertRowid, email, category, ...(category === 'admin_invitation' ? { requestedRoles } : {}) }));
+    .run(user?.id || null, category.startsWith('platform_') ? 'platform_support_request_created' : 'admin_support_request_created', JSON.stringify({ requestId: result.lastInsertRowid, email, category, ...(category === 'admin_invitation' ? { requestedRoles } : {}) }));
   recent.push(now);
   recentSubmissions.set(ip, recent);
   return res.status(201).json({ success: true, requestId: result.lastInsertRowid, message: 'Your ticket was raised successfully and sent to the platform owner.' });

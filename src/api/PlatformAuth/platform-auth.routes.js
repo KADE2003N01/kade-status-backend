@@ -28,7 +28,9 @@ const requestSchema = (body) => z.object({
 const signupSchema = requestSchema(z.object({
   email: emailSchema,
   displayName: z.string().trim().min(2).max(100),
-  password: passwordSchema
+  password: passwordSchema,
+  templateId: z.enum(['free', 'standard', 'professional']).default('free'),
+  currency: z.enum(['RWF', 'USD']).default('RWF')
 }));
 const loginSchema = requestSchema(z.object({
   email: emailSchema,
@@ -98,9 +100,17 @@ function publicUser(user) {
   };
 }
 
+function publicOnboarding(userId) {
+  const onboarding = database.prepare(`
+    SELECT selected_template_id AS templateId, currency, stage, payment_status AS paymentStatus
+    FROM platform_onboarding WHERE user_id = ?
+  `).get(userId);
+  return onboarding || null;
+}
+
 router.post('/signup', authRateLimit, validateRequest(signupSchema), async (req, res, next) => {
   try {
-    const { email, displayName, password } = req.validated.body;
+    const { email, displayName, password, templateId, currency } = req.validated.body;
     const transporter = requireMailer();
     const existing = database.prepare('SELECT id, status FROM users WHERE email = ?').get(email);
     if (existing && existing.status !== 'pending_verification') {
@@ -118,6 +128,23 @@ router.post('/signup', authRateLimit, validateRequest(signupSchema), async (req,
         database.prepare('UPDATE users SET display_name = ?, password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
           .run(displayName, passwordHash, userId);
       }
+      const isFreePlan = templateId === 'free';
+      database.prepare(`
+        INSERT INTO platform_onboarding (user_id, selected_template_id, currency, stage, payment_status)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+          selected_template_id = excluded.selected_template_id,
+          currency = excluded.currency,
+          stage = excluded.stage,
+          payment_status = excluded.payment_status,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(
+        userId,
+        templateId,
+        currency,
+        isFreePlan ? 'space_setup' : 'subscription',
+        isFreePlan ? 'not_required' : 'pending'
+      );
       database.prepare('DELETE FROM email_verifications WHERE user_id = ?').run(userId);
       database.prepare(`
         INSERT INTO email_verifications (token_hash, user_id, expires_at, created_at)
@@ -134,7 +161,8 @@ router.post('/signup', authRateLimit, validateRequest(signupSchema), async (req,
     );
     return res.status(201).json({
       success: true,
-      message: 'Check your email for a verification link.'
+      message: 'Check your email for a verification link.',
+      onboarding: publicOnboarding(userId)
     });
   } catch (error) {
     return next(error);
@@ -189,7 +217,7 @@ router.post('/login', authRateLimit, validateRequest(loginSchema), async (req, r
       `).run(hashPlatformToken(token), user.id, expiresAt, Date.now());
     })();
     res.cookie(PLATFORM_SESSION_COOKIE, token, getPlatformSessionCookieOptions());
-    return res.json({ success: true, user: publicUser(user) });
+    return res.json({ success: true, user: publicUser(user), onboarding: publicOnboarding(user.id) });
   } catch (error) {
     return next(error);
   }
@@ -265,7 +293,11 @@ router.post('/reset-password', authRateLimit, validateRequest(resetSchema), asyn
 });
 
 router.get('/me', requirePlatformUser, (req, res) => {
-  return res.json({ success: true, user: publicUser(req.platformUser) });
+  return res.json({
+    success: true,
+    user: publicUser(req.platformUser),
+    onboarding: publicOnboarding(req.platformUser.id)
+  });
 });
 
 export default router;

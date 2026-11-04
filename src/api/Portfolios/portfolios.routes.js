@@ -124,6 +124,11 @@ router.post('/', validateRequest(createSchema), (req, res) => {
         INSERT INTO portfolio_sections (portfolio_id, type, sort_order, data_json)
         VALUES (?, 'hero', 0, ?)
       `).run(result.lastInsertRowid, JSON.stringify({ title }));
+      database.prepare(`
+        UPDATE platform_onboarding
+        SET stage = 'complete', updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+      `).run(req.platformUser.id);
       return result.lastInsertRowid;
     });
     const id = createPortfolio();
