@@ -3,6 +3,7 @@ import { z } from 'zod';
 import database from '../../database/platform-database.js';
 import { validateRequest } from '../../middleware/validate-request.js';
 import { hashRecruiterSession, RECRUITER_SESSION_COOKIE } from '../../services/platform-privacy.js';
+import { getPlanLimits } from '../../services/space-plan-limits.js';
 
 const router = express.Router();
 const paramsSchema = z.object({
@@ -16,7 +17,7 @@ const requestSchema = z.object({
 
 router.get('/:slug', validateRequest(requestSchema), (req, res) => {
   const portfolio = database.prepare(`
-    SELECT id, slug, template_id AS templateId
+    SELECT id, slug, template_id AS templateId, owner_user_id AS ownerUserId
     FROM portfolios WHERE slug = ? COLLATE NOCASE AND status = 'published'
   `).get(req.validated.params.slug);
   if (!portfolio) return res.status(404).json({ success: false, error: 'Portfolio not found.' });
@@ -33,7 +34,7 @@ router.get('/:slug', validateRequest(requestSchema), (req, res) => {
   }));
   return res.json({
     success: true,
-    portfolio: { slug: portfolio.slug, templateId: portfolio.templateId, sections }
+    portfolio: { slug: portfolio.slug, templateId: portfolio.templateId, watermark: getPlanLimits(database, portfolio.ownerUserId).watermark, sections }
   });
 });
 

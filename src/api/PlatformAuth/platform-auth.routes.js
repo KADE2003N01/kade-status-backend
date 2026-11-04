@@ -5,6 +5,7 @@ import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import database from '../../database/platform-database.js';
 import { getMailFromAddress, getTransporter } from '../../config/mailer.js';
+import { getUserPlanId } from '../../services/space-plan-limits.js';
 import { validateRequest } from '../../middleware/validate-request.js';
 import {
   getPlatformSessionCookieOptions,
@@ -96,7 +97,8 @@ function publicUser(user) {
     id: user.id,
     email: user.email,
     displayName: user.display_name,
-    role: user.role
+    role: user.role,
+    subscriptionPlan: getUserPlanId(database, user.id)
   };
 }
 

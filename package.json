@@ -15,6 +15,7 @@
     "admin:reset-password": "node scripts/reset-admin-password.js",
     "db:inspect": "node scripts/inspect-database.js",
     "db:schema": "node scripts/show-database-schema.js",
+    "qa:plans": "node scripts/qa-plan-gates.mjs",
     "setup:check": "node scripts/check-setup.js",
     "test": "node --test"
   },

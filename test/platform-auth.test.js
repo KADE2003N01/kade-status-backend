@@ -100,7 +100,8 @@ test('email verification, login, protected account access, and logout work', asy
     id: userId,
     email: 'customer@example.com',
     displayName: 'Test Customer',
-    role: 'customer'
+    role: 'customer',
+    subscriptionPlan: 'free'
   });
 
   const adminRoute = await fetch(`${baseUrl}/api/auth/admin-users`, {

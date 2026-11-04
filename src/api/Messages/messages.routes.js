@@ -510,7 +510,11 @@ router.post('/threads/:threadId/read', (req, res) => {
     if (!sender) return res.status(404).json({ success: false, error: 'Super-admin conversation not found.' });
   }
   const incoming = isPlatformOwner(req.adminUser) && !adminWorkspace
-    ? `sender.id <> ${Number(req.adminUser.id)} AND (message.recipient_owner_id = ${Number(req.adminUser.id)} OR message.recipient_owner_id IS NULL)`
+    ? `sender.id <> ${Number(req.adminUser.id)} AND (
+        message.recipient_owner_id = ${Number(req.adminUser.id)}
+        OR (message.recipient_owner_id IS NULL AND thread.admin_user_id = ${Number(req.adminUser.id)})
+        OR (message.recipient_owner_id IS NULL AND sender.role <> 'platform_owner')
+      )`
     : adminWorkspace
       ? `sender.role = 'platform_owner' AND sender.id <> ${Number(req.adminUser.id)} AND COALESCE(message.recipient_owner_id, thread.admin_user_id) = ${Number(req.adminUser.id)}`
       : 'sender.role = \'platform_owner\'';

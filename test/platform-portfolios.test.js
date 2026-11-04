@@ -36,6 +36,12 @@ const users = ['portfolio-owner-a@example.com', 'portfolio-owner-b@example.com']
     VALUES (?, ?, 'test-hash', 'active', CURRENT_TIMESTAMP)
   `).run(email, email.split('@')[0]).lastInsertRowid
 ));
+// Owner B gets an active Professional demo subscription; owner A stays on Free
+// so the plan gates are exercised from both sides.
+database.prepare(`
+  UPDATE subscriptions SET plan_id = 'professional', state = 'active', period_end = datetime('now', '+6 months')
+  WHERE user_id = ?
+`).run(users[1]);
 const cookies = users.map((userId) => {
   const token = randomBytes(32).toString('hex');
   database.prepare(`
@@ -98,11 +104,34 @@ test('owners can create, edit, publish, and read only their own portfolios', asy
       sections: [
         { type: 'hero', sortOrder: 0, data: { title: 'Owner A updated' } },
         { type: 'about', sortOrder: 1, data: { description: 'Public summary' } },
-        { type: 'skills', sortOrder: 2, isPrivate: true, data: { items: ['private skill'] } }
+        { type: 'skills', sortOrder: 2, isPrivate: false, data: { items: ['public skill'] } }
       ]
     }
   });
   assert.equal(saved.status, 200);
+
+  // Free-plan owners cannot mark sections private (Standard+ feature).
+  const privateDenied = await request(`/portfolios/${portfolio.id}/sections`, {
+    method: 'PUT',
+    cookie: cookies[0],
+    body: {
+      sections: [
+        { type: 'hero', sortOrder: 0, data: { title: 'Owner A updated' } },
+        { type: 'about', sortOrder: 1, isPrivate: true, data: { description: 'Recruiter only' } }
+      ]
+    }
+  });
+  assert.equal(privateDenied.status, 403);
+  assert.equal((await privateDenied.json()).upgradeTo, 'standard');
+
+  // Free-plan owners are capped at one portfolio space.
+  const secondSpace = await request('/portfolios', {
+    method: 'POST',
+    cookie: cookies[0],
+    body: { slug: 'owner-a-second-space', title: 'Owner A second' }
+  });
+  assert.equal(secondSpace.status, 403);
+  assert.equal((await secondSpace.json()).upgradeTo, 'standard');
 
   const draftRequest = await request('/public/owner-a-portfolio');
   assert.equal(draftRequest.status, 404);
@@ -116,7 +145,8 @@ test('owners can create, edit, publish, and read only their own portfolios', asy
   const publicResponse = await request('/public/owner-a-portfolio');
   assert.equal(publicResponse.status, 200);
   const publicPortfolio = (await publicResponse.json()).portfolio;
-  assert.deepEqual(publicPortfolio.sections.map(({ type }) => type), ['hero', 'about']);
+  assert.deepEqual(publicPortfolio.sections.map(({ type }) => type), ['hero', 'about', 'skills']);
+  assert.equal(publicPortfolio.watermark, true);
   assert.equal(JSON.stringify(publicPortfolio).includes('private skill'), false);
   assert.equal('ownerUserId' in publicPortfolio, false);
 
@@ -127,13 +157,13 @@ test('owners can create, edit, publish, and read only their own portfolios', asy
 test('portfolio content rejects unsafe links and reserved slugs', async () => {
   const created = await request('/portfolios', {
     method: 'POST',
-    cookie: cookies[0],
-    body: { slug: 'owner-a-portfolio-2', title: 'Owner A' }
+    cookie: cookies[1],
+    body: { slug: 'owner-b-portfolio', title: 'Owner B' }
   });
   const { portfolio } = await created.json();
   const unsafe = await request(`/portfolios/${portfolio.id}/sections`, {
     method: 'PUT',
-    cookie: cookies[0],
+    cookie: cookies[1],
     body: {
       sections: [{ type: 'contact', data: { websiteUrl: 'javascript:alert(1)' } }]
     }
@@ -142,22 +172,23 @@ test('portfolio content rejects unsafe links and reserved slugs', async () => {
 
   const reserved = await request('/portfolios', {
     method: 'POST',
-    cookie: cookies[0],
+    cookie: cookies[1],
     body: { slug: 'admin', title: 'Reserved' }
   });
   assert.equal(reserved.status, 400);
 });
 
 test('recruiter OTP unlocks private sections, while contact details remain encrypted and owner-scoped', async () => {
+  // Owner B holds the Professional demo subscription, so private sections are allowed.
   const created = await request('/portfolios', {
     method: 'POST',
-    cookie: cookies[0],
+    cookie: cookies[1],
     body: { slug: 'private-portfolio', title: 'Private Portfolio' }
   });
   const { portfolio } = await created.json();
   await request(`/portfolios/${portfolio.id}/sections`, {
     method: 'PUT',
-    cookie: cookies[0],
+    cookie: cookies[1],
     body: {
       sections: [
         { type: 'hero', data: { title: 'Private Portfolio' } },
@@ -167,7 +198,7 @@ test('recruiter OTP unlocks private sections, while contact details remain encry
   });
   await request(`/portfolios/${portfolio.id}/publish`, {
     method: 'PUT',
-    cookie: cookies[0],
+    cookie: cookies[1],
     body: {}
   });
 
@@ -222,10 +253,10 @@ test('recruiter OTP unlocks private sections, while contact details remain encry
   assert.equal(JSON.stringify(stored).includes(recruiterEmail), false);
   assert.ok(stored.consent_at);
 
-  const ownerLeads = await request(`/portfolios/${portfolio.id}/leads`, { cookie: cookies[0] });
+  const ownerLeads = await request(`/portfolios/${portfolio.id}/leads`, { cookie: cookies[1] });
   assert.equal(ownerLeads.status, 200);
   assert.equal((await ownerLeads.json()).leads[0].name, 'Jane Recruiter');
-  const otherOwnerLeads = await request(`/portfolios/${portfolio.id}/leads`, { cookie: cookies[1] });
+  const otherOwnerLeads = await request(`/portfolios/${portfolio.id}/leads`, { cookie: cookies[0] });
   assert.equal(otherOwnerLeads.status, 404);
 
   const superAdminId = database.prepare(`
@@ -246,11 +277,11 @@ test('recruiter OTP unlocks private sections, while contact details remain encry
 test('invalid recruiter codes lock after five attempts and OTP delivery requires mail configuration', async () => {
   const created = await request('/portfolios', {
     method: 'POST',
-    cookie: cookies[0],
+    cookie: cookies[1],
     body: { slug: 'otp-lock-portfolio', title: 'OTP Lock' }
   });
   const { portfolio } = await created.json();
-  await request(`/portfolios/${portfolio.id}/publish`, { method: 'PUT', cookie: cookies[0], body: {} });
+  await request(`/portfolios/${portfolio.id}/publish`, { method: 'PUT', cookie: cookies[1], body: {} });
 
   const email = 'locked@example.com';
   const emailHash = hashRecruiterEmail(email);

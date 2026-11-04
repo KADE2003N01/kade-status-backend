@@ -4,6 +4,11 @@ import database from '../../database/platform-database.js';
 import { validateRequest } from '../../middleware/validate-request.js';
 import { requirePlatformUser } from '../../verification/platform-auth.js';
 import { decryptPrivateField } from '../../services/platform-privacy.js';
+import {
+  canCreateSpace,
+  getPlanLimits,
+  minimumPlanForSection
+} from '../../services/space-plan-limits.js';
 
 const router = express.Router();
 const emptyObject = z.object({});
@@ -114,6 +119,18 @@ router.post('/', validateRequest(createSchema), (req, res) => {
   if (isReservedSlug(slug)) {
     return res.status(400).json({ success: false, error: 'That portfolio address is reserved.' });
   }
+  // Server-side plan gate (Pattern C): never trust the client's space count.
+  const limits = getPlanLimits(database, req.platformUser.id);
+  const ownedCount = database.prepare(
+    'SELECT COUNT(*) AS count FROM portfolios WHERE owner_user_id = ?'
+  ).get(req.platformUser.id).count;
+  if (!canCreateSpace(limits, ownedCount)) {
+    return res.status(403).json({
+      success: false,
+      error: `Your plan allows ${limits.maxSpaces} portfolio space${limits.maxSpaces === 1 ? '' : 's'}. Upgrade to create more.`,
+      upgradeTo: limits.maxSpaces === 1 ? 'standard' : 'professional'
+    });
+  }
   try {
     const createPortfolio = database.transaction(() => {
       const result = database.prepare(`
@@ -214,6 +231,27 @@ router.put('/:portfolioId/sections', validateRequest(requestSchema(sectionsBodyS
   const ownsPortfolio = database.prepare('SELECT 1 FROM portfolios WHERE id = ? AND owner_user_id = ?')
     .get(portfolioId, req.platformUser.id);
   if (!ownsPortfolio) return res.status(404).json({ success: false, error: 'Portfolio not found.' });
+
+  // Server-side plan gate (Pattern C): reject section types outside the plan.
+  const limits = getPlanLimits(database, req.platformUser.id);
+  const blockedSection = req.validated.body.sections.find((section) => !limits.sections.includes(section.type));
+  if (blockedSection) {
+    return res.status(403).json({
+      success: false,
+      error: `Your plan does not include the ${blockedSection.type} section. Upgrade to save it.`,
+      upgradeTo: minimumPlanForSection(blockedSection.type)
+    });
+  }
+  if (!limits.privateSections) {
+    const privateRequested = req.validated.body.sections.find((section) => section.isPrivate);
+    if (privateRequested) {
+      return res.status(403).json({
+        success: false,
+        error: 'Private sections need the Standard plan or higher. Upgrade to save them.',
+        upgradeTo: 'standard'
+      });
+    }
+  }
 
   let encoded;
   try {
