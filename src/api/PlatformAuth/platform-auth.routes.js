@@ -45,6 +45,20 @@ const resetSchema = requestSchema(z.object({
   password: passwordSchema
 }));
 const emailOnlySchema = requestSchema(z.object({ email: emailSchema }));
+const profileSchema = requestSchema(z.object({
+  displayName: z.string().trim().min(2).max(100),
+  phone: z.string().trim().max(40).default(''),
+  professionalRole: z.string().trim().max(120).default(''),
+  location: z.string().trim().max(160).default(''),
+  streetAddress: z.string().trim().max(200).default(''),
+  city: z.string().trim().max(100).default(''),
+  region: z.string().trim().max(100).default(''),
+  postalCode: z.string().trim().max(30).default(''),
+  country: z.string().trim().max(100).default(''),
+  website: z.string().trim().max(240).refine((value) => !value || /^https?:\/\//i.test(value), 'Website must start with http:// or https://.').default(''),
+  bio: z.string().trim().max(2000).default('')
+}));
+const passwordChangeSchema = requestSchema(z.object({ currentPassword: z.string().min(1).max(1024), password: passwordSchema }));
 const authRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 10,
@@ -93,12 +107,21 @@ async function sendAccountEmail(transporter, email, subject, text) {
 }
 
 function publicUser(user) {
+  const profile = database.prepare(`SELECT phone, professional_role AS professionalRole, location, street_address AS streetAddress,
+    city, region, postal_code AS postalCode, country, website, bio FROM users WHERE id = ?`).get(user.id) || {};
+  const subscription = database.prepare(`
+    SELECT plan_id AS planId, state AS state, period_end AS periodEnd
+    FROM subscriptions WHERE user_id = ?
+  `).get(user.id) || {};
   return {
     id: user.id,
     email: user.email,
     displayName: user.display_name,
     role: user.role,
-    subscriptionPlan: getUserPlanId(database, user.id)
+    subscriptionPlan: getUserPlanId(database, user.id),
+    subscriptionState: subscription.state || 'free',
+    subscriptionEndsAt: subscription.periodEnd || null,
+    ...profile
   };
 }
 
@@ -309,6 +332,34 @@ router.get('/me', requirePlatformUser, (req, res) => {
     user: publicUser(req.platformUser),
     onboarding: publicOnboarding(req.platformUser.id)
   });
+});
+
+router.put('/profile', requirePlatformUser, validateRequest(profileSchema), (req, res) => {
+  const profile = req.validated.body;
+  database.prepare(`UPDATE users SET display_name = ?, phone = ?, professional_role = ?, location = ?, street_address = ?,
+    city = ?, region = ?, postal_code = ?, country = ?, website = ?, bio = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+    .run(profile.displayName, profile.phone, profile.professionalRole, profile.location, profile.streetAddress,
+      profile.city, profile.region, profile.postalCode, profile.country, profile.website, profile.bio, req.platformUser.id);
+  const updated = database.prepare('SELECT id, email, display_name, role FROM users WHERE id = ?').get(req.platformUser.id);
+  return res.json({ success: true, user: publicUser(updated) });
+});
+
+router.post('/change-password', requirePlatformUser, validateRequest(passwordChangeSchema), async (req, res, next) => {
+  try {
+    const { currentPassword, password } = req.validated.body;
+    const user = database.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.platformUser.id);
+    if (!user || !(await bcrypt.compare(currentPassword, user.password_hash))) {
+      return res.status(400).json({ success: false, error: 'Current password is incorrect.' });
+    }
+    const passwordHash = await bcrypt.hash(password, 12);
+    database.transaction(() => {
+      database.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(passwordHash, req.platformUser.id);
+      database.prepare('DELETE FROM sessions WHERE user_id = ?').run(req.platformUser.id);
+    })();
+    const { maxAge, ...cookieOptions } = getPlatformSessionCookieOptions();
+    res.clearCookie(PLATFORM_SESSION_COOKIE, cookieOptions);
+    return res.json({ success: true, message: 'Password updated. Sign in again with your new password.' });
+  } catch (error) { return next(error); }
 });
 
 export default router;
