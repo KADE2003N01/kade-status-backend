@@ -1,0 +1,25 @@
+✅ .env file loaded successfully. Parsed variables: [
+  'PORT',
+  'NODE_ENV',
+  'FRONTEND_URL',
+  'EMAIL_USER',
+  'EMAIL_PASSWORD',
+  'CONTACT_EMAIL_USER',
+  'CONTACT_EMAIL_PASSWORD',
+  'CONTACT_NOTIFICATION_EMAIL',
+  'ADMIN_EMAIL',
+  'ADMIN_PASSWORD',
+  'ADMIN_DISPLAY_NAME',
+  'ADMIN_PHONE',
+  'ADMIN_EMAIL_2',
+  'ADMIN_PASSWORD_2',
+  'ADMIN_DISPLAY_NAME_2',
+  'ADMIN_PHONE_2',
+  'DATABASE_PATH',
+  'PUBLIC_API_URL',
+  'COOKIE_SAME_SITE'
+]
+✅ Server listening on 127.0.0.1:5000 (development)
+📡 Allowed Frontend URL: http://127.0.0.1:5173
+📧 Email configured: kadecomputerscience@gmail.com
+🔑 App Password set: ✅ YES

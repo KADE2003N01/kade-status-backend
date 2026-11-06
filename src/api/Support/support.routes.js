@@ -1,8 +1,46 @@
 import express from 'express';
 import database from '../../database/database.js';
+import { requirePlatformUser } from '../../verification/platform-auth.js';
+import { requireAccountPage } from '../../services/account-page-access.js';
 
 const router = express.Router();
 const recentSubmissions = new Map();
+
+router.get('/', requirePlatformUser, requireAccountPage(database, 'support'), (req, res) => {
+  const rows = database.prepare(`SELECT request.id, request.category, request.message, request.status,
+    request.created_at AS createdAt, request.resolved_at AS resolvedAt,
+    response.body AS responseBody, response.sent_at AS responseSentAt,
+    admin.display_name AS responderName
+    FROM admin_support_requests request
+    LEFT JOIN admin_support_request_responses response ON response.request_id = request.id
+    LEFT JOIN admin_users admin ON admin.id = response.responder_id
+    WHERE request.email = ? COLLATE NOCASE AND request.deleted_at IS NULL
+    ORDER BY request.created_at DESC, request.id DESC, response.sent_at, response.id`).all(req.platformUser.email);
+  const requestsById = new Map();
+  for (const row of rows) {
+    let request = requestsById.get(row.id);
+    if (!request) {
+      request = {
+        id: row.id,
+        category: row.category,
+        message: row.message,
+        status: row.status,
+        createdAt: row.createdAt,
+        resolvedAt: row.resolvedAt,
+        responses: []
+      };
+      requestsById.set(row.id, request);
+    }
+    if (row.responseBody !== null) {
+      request.responses.push({
+        body: row.responseBody,
+        sentAt: row.responseSentAt,
+        responderName: row.responderName || 'FolioSpace support'
+      });
+    }
+  }
+  return res.json({ success: true, requests: [...requestsById.values()] });
+});
 
 router.post('/', (req, res) => {
   const ip = req.ip || req.socket.remoteAddress || 'unknown';

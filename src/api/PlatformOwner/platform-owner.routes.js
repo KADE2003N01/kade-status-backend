@@ -4,6 +4,7 @@ import database from '../../database/database.js';
 import { requirePlatformOwner } from '../../verification/admin-auth.js';
 import { sendAdminPasswordLink } from '../../services/admin-password-links.js';
 import { resolveSupportRequestsForAdmin } from '../../services/support-request-resolution.js';
+import { ACCOUNT_PAGE_IDS, getAllPlanAccountPages } from '../../services/account-page-access.js';
 import { getMailFromAddress, getTransporter } from '../../config/mailer.js';
 
 const router = express.Router();
@@ -21,6 +22,53 @@ function presentAdmin(admin) {
 }
 
 router.use(...requirePlatformOwner);
+
+const accountPlanIds = ['free', 'standard', 'professional'];
+
+router.get('/account-page-access', (req, res) => {
+  return res.json({ success: true, plans: getAllPlanAccountPages(database) });
+});
+
+router.put('/account-page-access', (req, res) => {
+  const submittedPlans = req.body?.plans;
+  if (!submittedPlans || typeof submittedPlans !== 'object' || Array.isArray(submittedPlans)) {
+    return res.status(400).json({ success: false, error: 'Provide page access for each subscription plan.' });
+  }
+
+  const normalizedPlans = {};
+  for (const planId of accountPlanIds) {
+    const pages = submittedPlans[planId];
+    if (!Array.isArray(pages) || pages.some((page) => !ACCOUNT_PAGE_IDS.includes(page))) {
+      return res.status(400).json({ success: false, error: `Choose valid account pages for the ${planId} plan.` });
+    }
+    normalizedPlans[planId] = [...new Set(pages)];
+    if (!normalizedPlans[planId].includes('overview')) {
+      return res.status(400).json({ success: false, error: 'Overview must remain available on every plan.' });
+    }
+    if (normalizedPlans[planId].includes('support-chat') && !normalizedPlans[planId].includes('support')) {
+      return res.status(400).json({ success: false, error: 'Support chat requires the Support page.' });
+    }
+  }
+
+  const savePage = database.prepare(`INSERT INTO platform_plan_account_pages (plan_id, page_id, enabled, updated_by, updated_at)
+    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(plan_id, page_id) DO UPDATE SET
+      enabled = excluded.enabled, updated_by = excluded.updated_by, updated_at = CURRENT_TIMESTAMP`);
+  database.transaction(() => {
+    for (const planId of accountPlanIds) {
+      for (const pageId of ACCOUNT_PAGE_IDS) {
+        savePage.run(planId, pageId, Number(normalizedPlans[planId].includes(pageId)), req.adminUser.id);
+      }
+    }
+  })();
+
+  audit(req.adminUser.id, null, 'account_page_access_updated', { plans: normalizedPlans });
+  return res.json({
+    success: true,
+    plans: getAllPlanAccountPages(database),
+    message: 'Account page access was updated for all subscription plans.'
+  });
+});
 
 function audit(actorId, targetId, action, details = {}) {
   database.prepare('INSERT INTO platform_admin_audit (actor_id, target_id, action, details_json) VALUES (?, ?, ?, ?)')
@@ -88,6 +136,104 @@ router.get('/admins', (req, res) => {
   const admins = database.prepare(`${adminSelect} WHERE deleted_at IS NULL${conditions.length ? ` AND ${conditions.join(' AND ')}` : ''} ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, display_name COLLATE NOCASE, id LIMIT ? OFFSET ?`)
     .all(...parameters, pageSize, (page - 1) * pageSize).map(presentAdmin);
   return res.json({ success: true, admins, page, pageSize, total, totalPages, counts });
+});
+
+// ── Customer basic-info change requests ──────────────────────────────────
+router.get('/profile-change-requests', (req, res) => {
+  const status = ['pending', 'approved', 'denied'].includes(req.query.status) ? req.query.status : 'pending';
+  const requests = database.prepare(`
+    SELECT request.id, request.user_id AS userId, request.current_name AS currentName, request.current_email AS currentEmail,
+      request.new_name AS newName, request.new_email AS newEmail, request.fields_json AS fieldsJson,
+      request.reason, request.status, request.owner_note AS ownerNote,
+      request.created_at AS createdAt, request.reviewed_at AS reviewedAt, request.ahead_until AS aheadUntil
+    FROM customer_profile_change_requests request
+    JOIN users ON users.id = request.user_id
+    WHERE request.status = ? AND request.deleted_at IS NULL
+    ORDER BY request.created_at DESC, request.id DESC LIMIT 300
+  `).all(status).map((row) => {
+    let fields = [];
+    try { fields = JSON.parse(row.fieldsJson || '[]'); } catch { fields = []; }
+    return { ...row, fields };
+  });
+  return res.json({ success: true, requests });
+});
+
+router.patch('/profile-change-requests/:requestId', (req, res) => {
+  const id = Number(req.params.requestId);
+  const status = req.body?.status;
+  const note = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, 500) : '';
+  if (!Number.isSafeInteger(id) || id < 1 || !['approved', 'denied', 'cancelled'].includes(status)) {
+    return res.status(400).json({ success: false, error: 'Choose a valid request and decision.' });
+  }
+  const request = database.prepare(`
+    SELECT request.id, request.user_id AS userId, request.support_request_id AS supportRequestId,
+      request.current_name AS currentName,
+      request.new_name AS newName, request.new_email AS newEmail, request.fields_json AS fieldsJson, request.status
+    FROM customer_profile_change_requests request
+    WHERE request.id = ? AND request.status = 'pending'
+  `).get(id);
+  if (!request) return res.status(404).json({ success: false, error: 'This request is not pending anymore.' });
+
+  let fields = [];
+  try { fields = JSON.parse(request.fieldsJson || '[]'); } catch { fields = []; }
+  database.transaction(() => {
+    if (status === 'cancelled') {
+      // Cancel = deny without touching the account, flagged for acknowledgement.
+      database.prepare(`UPDATE customer_profile_change_requests
+        SET status = 'cancelled', owner_note = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?`)
+        .run(note, req.adminUser.id, id);
+    } else {
+      if (status === 'approved') {
+        if (fields.includes('name') && request.newName) {
+          database.prepare('UPDATE users SET display_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(request.newName, request.userId);
+        }
+        if (fields.includes('email') && request.newEmail) {
+          // Email changes require the address to be unused.
+          const clash = database.prepare('SELECT id FROM users WHERE email = ? COLLATE NOCASE AND id <> ?').get(request.newEmail, request.userId);
+          if (clash) throw Object.assign(new Error('The requested email is already used by another account.'), { status: 409 });
+          database.prepare('UPDATE users SET email = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(request.newEmail, request.userId);
+        }
+      }
+      database.prepare(`UPDATE customer_profile_change_requests
+        SET status = ?, owner_note = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP,
+          ahead_until = CASE WHEN ? = 'approved' THEN datetime('now', '+1 day') ELSE ahead_until END
+        WHERE id = ?`)
+        .run(status, note, req.adminUser.id, status, id);
+    }
+    // Mirror the decision into the support portal thread so the customer sees
+    // the full response in their own request history.
+    if (request.supportRequestId) {
+      database.prepare(`UPDATE admin_support_requests SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'open'`).run(request.supportRequestId);
+      const decisionMessage = status === 'approved'
+        ? `Your basic info change request has been approved and applied. You have 24 hours from now to edit your basic info directly in your profile.${note ? ` Note from the owner: ${note}` : ''}`
+        : status === 'cancelled'
+          ? `Your basic info change request was cancelled by the platform owner.${note ? ` Note: ${note}` : ''} Open your profile and press OK to acknowledge it.`
+          : `Your basic info change request was denied. Nothing was changed.${note ? ` Note: ${note}` : ''}`;
+      database.prepare('INSERT INTO admin_support_request_responses (request_id, responder_id, body) VALUES (?, ?, ?)')
+        .run(request.supportRequestId, req.adminUser.id, decisionMessage);
+    }
+    audit(req.adminUser.id, request.userId, `profile_change_${status}`, { requestId: id, fields });
+  })();
+  return res.json({ success: true, message: status === 'approved' ? 'Change approved. The customer has a 24-hour editing window.' : status === 'cancelled' ? 'Request cancelled.' : 'Request denied.' });
+});
+
+// Reopen a resolved/denied request (the “Cancel” action): the request goes back
+// to the incoming pending list so the owner can handle it again.
+router.patch('/profile-change-requests/:requestId/reopen', (req, res) => {
+  const id = Number(req.params.requestId);
+  if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ success: false, error: 'Invalid request.' });
+  const request = database.prepare('SELECT id, support_request_id AS supportRequestId FROM customer_profile_change_requests WHERE id = ?').get(id);
+  if (!request) return res.status(404).json({ success: false, error: 'Request not found.' });
+  database.transaction(() => {
+    database.prepare("UPDATE customer_profile_change_requests SET status = 'pending', reviewed_by = NULL, reviewed_at = NULL WHERE id = ?").run(id);
+    if (request.supportRequestId) {
+      database.prepare("UPDATE admin_support_requests SET status = 'open', resolved_at = NULL, deleted_at = NULL WHERE id = ?").run(request.supportRequestId);
+      database.prepare('INSERT INTO admin_support_request_responses (request_id, responder_id, body) VALUES (?, ?, ?)')
+        .run(request.supportRequestId, req.adminUser.id, req.body?.note?.trim()?.slice(0, 500) || 'Your request was reopened for review by the platform owner.');
+    }
+    audit(req.adminUser.id, request.userId, 'profile_change_reopened', { requestId: id });
+  })();
+  return res.json({ success: true, message: 'Request reopened and moved back to incoming.' });
 });
 
 router.get('/audit', (req, res) => {
@@ -183,6 +329,23 @@ router.patch('/support-requests/:requestId', (req, res) => {
   database.prepare('INSERT INTO platform_admin_audit (actor_id, action, details_json) VALUES (?, ?, ?)')
     .run(req.adminUser.id, status === 'resolved' ? 'support_request_resolved' : 'support_request_reopened', JSON.stringify({ requestId: id }));
   return res.json({ success: true, message: status === 'resolved' ? 'Support request marked resolved.' : 'Support request reopened.' });
+});
+
+// Cancel a resolved request: reopen it in the owner inbox AND leave a written
+// explanation the customer can read in their own request history.
+router.patch('/support-requests/:requestId/cancel', (req, res) => {
+  const id = Number(req.params.requestId);
+  if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ success: false, error: 'Invalid request.' });
+  const request = database.prepare("SELECT id, status FROM admin_support_requests WHERE id = ? AND deleted_at IS NULL").get(id);
+  if (!request) return res.status(404).json({ success: false, error: 'Request not found.' });
+  const note = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, 500) : '';
+  database.transaction(() => {
+    database.prepare("UPDATE admin_support_requests SET status = 'open', resolved_at = NULL WHERE id = ?").run(id);
+    database.prepare('INSERT INTO admin_support_request_responses (request_id, responder_id, body) VALUES (?, ?, ?)')
+      .run(id, req.adminUser.id, note || 'Your request was cancelled by the platform owner.');
+    audit(req.adminUser.id, null, 'support_request_cancelled', { requestId: id, note });
+  })();
+  return res.json({ success: true, message: 'Request cancelled, moved back to incoming, and the customer was notified.' });
 });
 
 router.post('/support-requests/respond', async (req, res, next) => {
