@@ -38,10 +38,12 @@ if (isRender) {
       return true;
     }
   };
+  const deployedFrontendOrigin = 'https://foliospace-drzx.onrender.com';
   const publicOrigin = validOrigins.find((origin) => !isLocalOrigin(origin))
-    || 'https://my-digital-status.onrender.com';
+    || deployedFrontendOrigin;
   process.env.FRONTEND_URL = [...new Set([
     publicOrigin,
+    deployedFrontendOrigin,
     ...validOrigins.filter((origin) => !isLocalOrigin(origin))
   ])].join(',');
 }

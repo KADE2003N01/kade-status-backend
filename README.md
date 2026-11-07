@@ -100,7 +100,7 @@ Use `.env.example` as the commented template. Copy it to `.env` for local use, r
 | --- | --- |
 | `PORT` | Backend HTTP port. Defaults to `5000`. |
 | `NODE_ENV` | Use `development` locally and `production` on the deployed backend. |
-| `FRONTEND_URL` | Comma-separated frontend origins allowed by CORS. Use exact origins with no trailing slash. Password recovery links use the first configured origin, so put the deployed frontend first in production. |
+| `FRONTEND_URL` | Comma-separated frontend origins allowed by CORS. Use exact origins with no trailing slash. Set the deployed frontend origin in the backend hosting environment; local `.env` values are not copied to the host. Password recovery links use the first configured origin, so put the deployed frontend first in production. |
 | `EMAIL_USER`, `EMAIL_PASSWORD` | SMTP identity and password for document verification and account recovery. For Gmail, use an App Password for the same account, not its normal password. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_FROM` | Optional SMTP overrides for the general email service. Gmail is the default if `SMTP_HOST` is omitted. Port 587 normally uses `SMTP_SECURE=false`; port 465 normally uses `true`. |
 | `CONTACT_EMAIL_USER`, `CONTACT_EMAIL_PASSWORD` | Optional separate SMTP account for the public contact form. If omitted, the general `EMAIL_*` settings are the fallback. |
